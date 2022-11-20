@@ -5,7 +5,7 @@ as the standard Go map type.
 
 ## Importing the module
 ```
-go get github.com/gostonefire/filehashmap@v0.6.0
+go get github.com/gostonefire/filehashmap@latest
 ```
 
 ## Quick example
