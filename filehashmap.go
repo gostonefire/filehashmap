@@ -5,10 +5,24 @@ import (
 	"github.com/gostonefire/filehashmap/internal/conf"
 	"github.com/gostonefire/filehashmap/internal/file"
 	"github.com/gostonefire/filehashmap/internal/hash"
+	"github.com/gostonefire/filehashmap/internal/model"
 	"github.com/gostonefire/filehashmap/internal/utils"
 	"math"
 	"os"
 )
+
+// FileProcessing - Interface for any file processing implementation
+type FileProcessing interface {
+	CloseFiles()
+	RemoveFiles() (err error)
+	SetBucketRecord(record model.Record) (err error)
+	GetBucketRecords(bucketNo int64) (bucket model.Bucket, err error)
+	SetBucketOverflowAddress(bucketAddress, overflowAddress int64) (err error)
+	NewBucketOverflow(key, value []byte) (overflowAddress int64, err error)
+	SetOverflowRecord(record model.Record) (err error)
+	GetOverflowRecord(recordAddress int64) (record model.Record, err error)
+	AppendOverflowRecord(linkingRecord model.Record, key, value []byte) (err error)
+}
 
 // BucketAlgorithm - Interface that permits an implementation using the FileHashMap to supply a custom bucket
 // selection algorithm suited for its particular distribution of keys.
@@ -51,8 +65,7 @@ type HashMapStat struct {
 // FileHashMap - The main implementation struct
 type FileHashMap struct {
 	bucketAlg         BucketAlgorithm
-	hashMapFile       *os.File
-	ovflFile          *os.File
+	fileProcessing    FileProcessing
 	mapFileName       string
 	ovflFileName      string
 	initialUniqueKeys int64
@@ -64,6 +77,12 @@ type FileHashMap struct {
 	maxBucketNo       int64
 	fileSize          int64
 	internalAlg       bool
+	// CloseFiles - Closes the hash map file and the ovfl file. Use this preferably in a "defer" directly
+	// after a CreateNewFile or NewFromExistingFile.
+	CloseFiles func()
+	// RemoveFiles - Removes the map file and the overflow file if they exist.
+	// The function first internally tries to close them using CloseFiles.
+	RemoveFiles func() error
 }
 
 // NewFileHashMap - Returns a new file prepared to cover a theoretical initial number of unique values.
@@ -174,19 +193,25 @@ func NewFromExistingFiles(name string, bucketAlgorithm BucketAlgorithm) (
 	hashMapInfo HashMapInfo,
 	err error,
 ) {
-	var mf, of *os.File
-	var header file.Header
+	var header model.Header
+	var fp FileProcessing
 	mapFileName := fmt.Sprintf("%s-map.bin", name)
 	ovflFileName := fmt.Sprintf("%s-ovfl.bin", name)
 
-	mf, header, err = file.OpenHashMapFile(mapFileName, bucketAlgorithm != nil)
+	fp, header, err = file.NewSCFilesFromExistingFiles(mapFileName, ovflFileName)
 	if err != nil {
 		return
 	}
 
-	of, err = file.OpenOverflowFile(ovflFileName)
-	if err != nil {
-		_ = mf.Close()
+	// Check for mismatch in choice of bucket algorithm
+	if header.InternalAlg && bucketAlgorithm != nil {
+		fp.CloseFiles()
+		err = fmt.Errorf("seems the hash map file was used with the internal hash algorithm but an external was given")
+		return
+	}
+	if !header.InternalAlg && bucketAlgorithm == nil {
+		fp.CloseFiles()
+		err = fmt.Errorf("seems the hash map file was used with the external hash algorithm but no external was given")
 		return
 	}
 
@@ -198,8 +223,7 @@ func NewFromExistingFiles(name string, bucketAlgorithm BucketAlgorithm) (
 	// Prepare return data
 	fileHashMap = &FileHashMap{
 		bucketAlg:         bucketAlgorithm,
-		hashMapFile:       mf,
-		ovflFile:          of,
+		fileProcessing:    fp,
 		mapFileName:       mapFileName,
 		ovflFileName:      ovflFileName,
 		initialUniqueKeys: header.InitialUniqueKeys,
@@ -211,6 +235,11 @@ func NewFromExistingFiles(name string, bucketAlgorithm BucketAlgorithm) (
 		maxBucketNo:       header.MaxBucketNo,
 		fileSize:          header.FileSize,
 		internalAlg:       header.InternalAlg,
+		CloseFiles:        func() { fp.CloseFiles() },
+		RemoveFiles: func() error {
+			fp.CloseFiles()
+			return fp.RemoveFiles()
+		},
 	}
 
 	fillFactor := float64(header.InitialUniqueKeys) / float64(header.RecordsPerBucket*header.NumberOfBuckets)
@@ -239,22 +268,7 @@ func NewFromExistingFiles(name string, bucketAlgorithm BucketAlgorithm) (
 // If the files already exists they will first be truncated to zero and then to calculated length,
 // hence removing all existing data.
 func (F *FileHashMap) CreateNewFiles() (err error) {
-	mf, err := file.CreateNewHashMapFile(F.mapFileName, F.fileSize)
-	if err != nil {
-		_ = F.RemoveFiles()
-		return
-	}
-
-	of, err := file.CreateNewOverflowFile(F.ovflFileName)
-	if err != nil {
-		_ = F.RemoveFiles()
-		return
-	}
-
-	F.hashMapFile = mf
-	F.ovflFile = of
-
-	header := file.Header{
+	header := model.Header{
 		InternalAlg:       F.internalAlg,
 		InitialUniqueKeys: F.initialUniqueKeys,
 		KeyLength:         F.keyLength,
@@ -265,29 +279,28 @@ func (F *FileHashMap) CreateNewFiles() (err error) {
 		MaxBucketNo:       F.maxBucketNo,
 		FileSize:          F.fileSize,
 	}
-	err = file.SetHeader(F.hashMapFile, header)
-	if err != nil {
-		err = fmt.Errorf("error while writing header to file: %s", err)
+
+	fpConf := file.SCFilesConf{
+		MapFileName:      F.mapFileName,
+		OvflFileName:     F.ovflFileName,
+		KeyLength:        F.keyLength,
+		ValueLength:      F.valueLength,
+		RecordsPerBucket: F.recordsPerBucket,
+		FileSize:         F.fileSize,
 	}
 
-	return
-}
+	fp, err := file.NewSCFiles(fpConf, header)
+	if err != nil {
+		_ = fp.RemoveFiles()
+		return
+	}
 
-// CloseFiles - Closes the hash map file and the ovfl file. Use this preferably in a "defer" directly
-// after a CreateNewFile or NewFromExistingFile.
-func (F *FileHashMap) CloseFiles() {
-	file.CloseFiles(F.hashMapFile, F.ovflFile)
-	F.ovflFile = nil
-	F.hashMapFile = nil
-}
-
-// RemoveFiles - Removes the map file and the overflow file if they exist.
-// The function first internally tries to close them using CloseFiles.
-func (F *FileHashMap) RemoveFiles() (err error) {
-	// First close files if they are still open
-	F.CloseFiles()
-
-	err = file.RemoveFiles(F.mapFileName, F.ovflFileName)
+	F.fileProcessing = fp
+	F.CloseFiles = func() { fp.CloseFiles() }
+	F.RemoveFiles = func() error {
+		fp.CloseFiles()
+		return fp.RemoveFiles()
+	}
 
 	return
 }
@@ -416,8 +429,8 @@ func ReorgFiles(name string, reorgConf ReorgConf, force bool) (fromHashMapInfo, 
 
 // reorgRecords - Reads bucket by bucket, record by record, transforms, and writes to new hash map files
 func reorgRecords(from *FileHashMap, to *FileHashMap, reorgConf ReorgConf) (err error) {
-	var bucket file.Bucket
-	var record file.Record
+	var bucket model.Bucket
+	var record model.Record
 	var iter *OverflowRecords
 	var key, value []byte
 	for i := int64(0); i < from.numberOfBuckets; i++ {

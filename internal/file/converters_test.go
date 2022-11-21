@@ -5,6 +5,7 @@ package file
 import (
 	"encoding/binary"
 	"github.com/gostonefire/filehashmap/internal/conf"
+	"github.com/gostonefire/filehashmap/internal/model"
 	"github.com/gostonefire/filehashmap/internal/utils"
 	"github.com/stretchr/testify/assert"
 	"testing"
@@ -43,7 +44,7 @@ func TestBytesToHeader(t *testing.T) {
 func TestHeaderToBytes(t *testing.T) {
 	t.Run("converts between bytes and Header struct", func(t *testing.T) {
 		// Prepare
-		header := Header{
+		header := model.Header{
 			InternalAlg:       true,
 			InitialUniqueKeys: 1000,
 			KeyLength:         16,
@@ -145,7 +146,7 @@ func TestOverflowBytesToRecord(t *testing.T) {
 func TestRecordToOverflowBytes(t *testing.T) {
 	t.Run("converts Record struct to overflow bytes", func(t *testing.T) {
 		// Prepare
-		record := Record{
+		record := model.Record{
 			InUse:         true,
 			IsOverflow:    true,
 			RecordAddress: 1000,

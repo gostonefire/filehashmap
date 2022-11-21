@@ -162,7 +162,7 @@ func getTestdata(fileName string, fhm *filehashmap.FileHashMap, shouldNotExist b
 }
 
 func TestStress(t *testing.T) {
-	t.Run("handles lots of stress and reorgs to better", func(t *testing.T) {
+	t.Run("handles lots of stress and reorgs", func(t *testing.T) {
 		// Prepare test data
 		rand.Seed(123)
 		err := createAndStoreTestdata(1000000, "testdata_1.txt")

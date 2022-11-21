@@ -3,482 +3,522 @@
 package file
 
 import (
-	"encoding/binary"
 	"github.com/gostonefire/filehashmap/internal/conf"
+	"github.com/gostonefire/filehashmap/internal/model"
 	"github.com/gostonefire/filehashmap/internal/utils"
 	"github.com/stretchr/testify/assert"
-	"io"
 	"os"
 	"testing"
 )
 
-const testFile1 string = "unittest1.bin"
-const testFile2 string = "unittest2.bin"
-
-func TestSetHeader(t *testing.T) {
-	t.Run("sets a header in file", func(t *testing.T) {
+func TestNewSCFiles(t *testing.T) {
+	t.Run("creates a new SCFiles instance", func(t *testing.T) {
 		// Prepare
-		f, err := os.OpenFile(testFile1, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0644)
-		assert.NoError(t, err, "open/create file")
+		scConf := SCFilesConf{
+			MapFileName:      "test-map.bin",
+			OvflFileName:     "test-ovfl.bin",
+			KeyLength:        16,
+			ValueLength:      10,
+			RecordsPerBucket: 2,
+			FileSize:         2048,
+		}
 
-		err = f.Truncate(1000)
-		assert.NoError(t, err, "truncate file to size")
-
-		header := Header{
-			InternalAlg:       true,
-			InitialUniqueKeys: 1000,
+		header := model.Header{
+			InternalAlg:       false,
+			InitialUniqueKeys: 10,
 			KeyLength:         16,
 			ValueLength:       10,
 			RecordsPerBucket:  2,
-			NumberOfBuckets:   500,
+			NumberOfBuckets:   5,
 			MinBucketNo:       0,
-			MaxBucketNo:       499,
-			FileSize:          1000,
+			MaxBucketNo:       4,
+			FileSize:          2048,
 		}
 
 		// Execute
-		err = SetHeader(f, header)
-
-		// check
-		assert.NoError(t, err, "set header to file")
-
-		// Clean up
-		_ = f.Close()
-		err = os.Remove(testFile1)
-		assert.NoError(t, err, "remove file")
-	})
-}
-
-func TestGetHeader(t *testing.T) {
-	t.Run("gets a header from file", func(t *testing.T) {
-		// Prepare
-		f, err := os.OpenFile(testFile1, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0644)
-		assert.NoError(t, err, "open/create file")
-
-		err = f.Truncate(1000)
-		assert.NoError(t, err, "truncate file to size")
-
-		header := Header{
-			InternalAlg:       true,
-			InitialUniqueKeys: 1000,
-			KeyLength:         16,
-			ValueLength:       10,
-			RecordsPerBucket:  2,
-			NumberOfBuckets:   500,
-			MinBucketNo:       0,
-			MaxBucketNo:       499,
-			FileSize:          1000,
-		}
-		err = SetHeader(f, header)
-		assert.NoError(t, err, "set header to file")
-
-		// Execute
-		header2, err := GetHeader(f)
-		assert.NoError(t, err, "gets header from file")
+		scFiles, err := NewSCFiles(scConf, header)
 
 		// Check
-		assert.Equal(t, header.InternalAlg, header2.InternalAlg)
-		assert.Equal(t, header.InitialUniqueKeys, header2.InitialUniqueKeys)
-		assert.Equal(t, header.KeyLength, header2.KeyLength)
-		assert.Equal(t, header.ValueLength, header2.ValueLength)
-		assert.Equal(t, header.RecordsPerBucket, header2.RecordsPerBucket)
-		assert.Equal(t, header.NumberOfBuckets, header2.NumberOfBuckets)
-		assert.Equal(t, header.MinBucketNo, header2.MinBucketNo)
-		assert.Equal(t, header.MaxBucketNo, header2.MaxBucketNo)
-		assert.Equal(t, header.FileSize, header2.FileSize)
+		assert.NoError(t, err, "create new SCFiles instance")
+		assert.Equal(t, scConf.MapFileName, scFiles.mapFileName, "map filename preserved")
+		assert.Equal(t, scConf.OvflFileName, scFiles.ovflFileName, "overflow filename preserved")
+		assert.Equal(t, scConf.KeyLength, scFiles.keyLength, "key length preserved")
+		assert.Equal(t, scConf.ValueLength, scFiles.valueLength, "value length preserved")
+		assert.Equal(t, scConf.RecordsPerBucket, scFiles.recordsPerBucket, "records per bucket preserved")
+
+		stat, err := os.Stat(scConf.MapFileName)
+		assert.NoError(t, err, "map file exists")
+		assert.Equal(t, scConf.FileSize, stat.Size(), "map file in correct size")
+		_, err = os.Stat(scConf.OvflFileName)
+		assert.NoError(t, err, "overflow file exists")
+
+		scFiles.CloseFiles()
+		err = scFiles.RemoveFiles()
+		assert.NoError(t, err, "removes files")
+
+		_, err = os.Stat(scConf.MapFileName)
+		assert.True(t, os.IsNotExist(err), "map file removed")
+		_, err = os.Stat(scConf.OvflFileName)
+		assert.True(t, os.IsNotExist(err), "overflow file removed")
 
 		// Clean up
-		_ = f.Close()
-		err = os.Remove(testFile1)
-		assert.NoError(t, err, "remove file")
 	})
 }
 
-func TestSetBucketRecord(t *testing.T) {
+func TestNewSCFilesFromExistingFiles(t *testing.T) {
+	t.Run("creates a new SCFiles instance", func(t *testing.T) {
+		// Prepare
+		scConf := SCFilesConf{
+			MapFileName:      "test-map.bin",
+			OvflFileName:     "test-ovfl.bin",
+			KeyLength:        16,
+			ValueLength:      10,
+			RecordsPerBucket: 2,
+			FileSize:         2048,
+		}
+
+		header := model.Header{
+			InternalAlg:       false,
+			InitialUniqueKeys: 10,
+			KeyLength:         16,
+			ValueLength:       10,
+			RecordsPerBucket:  2,
+			NumberOfBuckets:   5,
+			MinBucketNo:       0,
+			MaxBucketNo:       4,
+			FileSize:          2048,
+		}
+
+		scFiles, err := NewSCFiles(scConf, header)
+		assert.NoError(t, err, "create new SCFiles instance")
+		scFiles.CloseFiles()
+
+		// Execute
+		scFiles2, header2, err := NewSCFilesFromExistingFiles(scConf.MapFileName, scConf.OvflFileName)
+
+		// Check
+		assert.NoError(t, err, "opens existing files")
+		assert.Equal(t, scFiles.mapFileName, scFiles2.mapFileName, "map file name preserved")
+		assert.Equal(t, scFiles.ovflFileName, scFiles2.ovflFileName, "overflow file name preserved")
+		assert.Equal(t, scFiles.keyLength, scFiles2.keyLength, "key length preserved")
+		assert.Equal(t, scFiles.valueLength, scFiles2.valueLength, "value length preserved")
+		assert.Equal(t, scFiles.recordsPerBucket, scFiles2.recordsPerBucket, "records per bucket preserved")
+
+		assert.Equal(t, header.FileSize, header2.FileSize, "header FileSize preserved")
+		assert.Equal(t, header.KeyLength, header2.KeyLength, "header KeyLength preserved")
+		assert.Equal(t, header.ValueLength, header2.ValueLength, "header ValueLength preserved")
+		assert.Equal(t, header.RecordsPerBucket, header2.RecordsPerBucket, "header RecordsPerBucket preserved")
+		assert.Equal(t, header.InitialUniqueKeys, header2.InitialUniqueKeys, "header InitialUniqueKeys preserved")
+		assert.Equal(t, header.NumberOfBuckets, header2.NumberOfBuckets, "header NumberOfBuckets preserved")
+		assert.Equal(t, header.MinBucketNo, header2.MinBucketNo, "header MinBucketNo preserved")
+		assert.Equal(t, header.MaxBucketNo, header2.MaxBucketNo, "header MaxBucketNo preserved")
+		assert.Equal(t, header.InternalAlg, header2.InternalAlg, "header InternalAlg preserved")
+
+		// Clean up
+		scFiles2.CloseFiles()
+		err = scFiles2.RemoveFiles()
+		assert.NoError(t, err, "removes files")
+
+		_, err = os.Stat(scConf.MapFileName)
+		assert.True(t, os.IsNotExist(err), "map file removed")
+		_, err = os.Stat(scConf.OvflFileName)
+		assert.True(t, os.IsNotExist(err), "overflow file removed")
+	})
+}
+
+func TestSCFiles_SetBucketRecord(t *testing.T) {
 	t.Run("sets a bucket record in file", func(t *testing.T) {
 		// Prepare
-		f, err := os.OpenFile(testFile1, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0644)
-		assert.NoError(t, err, "open/create file")
-
-		err = f.Truncate(1000)
-		assert.NoError(t, err, "truncate file to size")
-
-		record := Record{
-			InUse:         true,
-			RecordAddress: 500,
-			Key:           []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
-			Value:         []byte{16, 17, 18, 19, 20, 21, 22, 23, 24, 25},
+		scConf := SCFilesConf{
+			MapFileName:      "test-map.bin",
+			OvflFileName:     "test-ovfl.bin",
+			KeyLength:        16,
+			ValueLength:      10,
+			RecordsPerBucket: 2,
+			FileSize:         2048,
 		}
 
-		// Execute
-		err = SetBucketRecord(f, record, 16, 10)
-
-		// Check
-		assert.NoError(t, err, "set record to file")
-
-		// Clean up
-		_ = f.Close()
-		err = os.Remove(testFile1)
-		assert.NoError(t, err, "remove file")
-	})
-}
-
-func TestGetBucketRecord(t *testing.T) {
-	t.Run("gets a bucket record from file", func(t *testing.T) {
-		// Prepare
-		f, err := os.OpenFile(testFile1, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0644)
-		assert.NoError(t, err, "open/create file")
-
-		err = f.Truncate(2000)
-		assert.NoError(t, err, "truncate file to size")
-
-		bucketAddress := conf.MapFileHeaderLength + 1*(27*1+conf.BucketHeaderLength)
-
-		record := Record{
-			InUse:         true,
-			RecordAddress: bucketAddress + conf.BucketHeaderLength,
-			Key:           []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
-			Value:         []byte{16, 17, 18, 19, 20, 21, 22, 23, 24, 25},
-		}
-
-		err = SetBucketRecord(f, record, 16, 10)
-		assert.NoError(t, err, "set record to file")
-
-		// Execute
-		record2, err := GetBucketRecords(f, 1, 16, 10, 1)
-
-		// Check
-		assert.NoError(t, err, "get bucket records")
-		assert.Equal(t, record.InUse, record2.Records[0].InUse)
-		assert.Equal(t, record.RecordAddress, record2.Records[0].RecordAddress)
-		assert.True(t, utils.IsEqual(record.Key, record2.Records[0].Key), "key is correct in record")
-		assert.True(t, utils.IsEqual(record.Value, record2.Records[0].Value), "value is correct in record")
-
-		// Clean up
-		_ = f.Close()
-		err = os.Remove(testFile1)
-		assert.NoError(t, err, "remove file")
-	})
-}
-
-func TestCreateNewHashMapFile(t *testing.T) {
-	t.Run("creates a new hash map file", func(t *testing.T) {
-		// Execute
-		f, err := CreateNewHashMapFile(testFile1, 1024)
-		_ = f.Close()
-
-		// Check
-		assert.NoError(t, err, "create new file")
-
-		stat, err := os.Stat(testFile1)
-		assert.NoError(t, err, "get stat info")
-		assert.Equal(t, int64(1024), stat.Size(), "has right size")
-
-		// Clean up
-		err = os.Remove(testFile1)
-		assert.NoError(t, err, "remove file")
-	})
-}
-
-func TestCreateNewOverflowFile(t *testing.T) {
-	t.Run("creates a new overflow file", func(t *testing.T) {
-		// Execute
-		f, err := CreateNewOverflowFile(testFile1)
-		_ = f.Close()
-
-		// Check
-		assert.NoError(t, err, "create new file")
-
-		stat, err := os.Stat(testFile1)
-		assert.NoError(t, err, "get stat info")
-		assert.Equal(t, conf.OvflFileHeaderLength, stat.Size(), "has right size")
-
-		// Clean up
-		err = os.Remove(testFile1)
-		assert.NoError(t, err, "remove file")
-	})
-}
-
-func TestRemoveFiles(t *testing.T) {
-	t.Run("removes files", func(t *testing.T) {
-		// Prepare
-		mf, err := CreateNewHashMapFile(testFile1, 1024)
-		assert.NoError(t, err, "create new hash map file")
-		of, err := CreateNewOverflowFile(testFile2)
-		assert.NoError(t, err, "create new overflow file")
-
-		CloseFiles(mf, of)
-
-		// Execute
-		err = RemoveFiles(testFile1, testFile2)
-
-		// Check
-		assert.NoError(t, err, "remove files")
-
-		_, err = os.Stat(testFile1)
-		assert.Errorf(t, err, "hash map file removed")
-		_, err = os.Stat(testFile2)
-		assert.Errorf(t, err, "overflow file removed")
-	})
-}
-
-func TestOpenHashMapFile(t *testing.T) {
-	t.Run("opens an existing hash map file", func(t *testing.T) {
-		// Prepare
-		f, err := CreateNewHashMapFile(testFile1, 1024)
-		assert.NoError(t, err, "create new file")
-
-		header := Header{
-			InternalAlg:       true,
-			InitialUniqueKeys: 1000,
+		header := model.Header{
+			InternalAlg:       false,
+			InitialUniqueKeys: 10,
 			KeyLength:         16,
 			ValueLength:       10,
 			RecordsPerBucket:  2,
-			NumberOfBuckets:   500,
+			NumberOfBuckets:   5,
 			MinBucketNo:       0,
-			MaxBucketNo:       499,
-			FileSize:          1024,
+			MaxBucketNo:       4,
+			FileSize:          2048,
 		}
-		err = SetHeader(f, header)
-		assert.NoError(t, err, "set header to file")
 
-		_ = f.Close()
+		scFiles, err := NewSCFiles(scConf, header)
+		assert.NoError(t, err, "create new SCFiles instance")
+
+		record := model.Record{
+			InUse:         true,
+			RecordAddress: 1024,
+			Key:           []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
+			Value:         []byte{16, 17, 18, 19, 20, 21, 22, 23, 24, 25},
+		}
 
 		// Execute
-		f, header2, err := OpenHashMapFile(testFile1, false)
+		err = scFiles.SetBucketRecord(record)
 
 		// Check
-		assert.NoError(t, err, "open hash map file")
-		assert.NotNil(t, f, "got file pointer")
-		assert.True(t, header2.InternalAlg)
-		assert.Equal(t, header.InitialUniqueKeys, header2.InitialUniqueKeys)
-		assert.Equal(t, header.KeyLength, header2.KeyLength)
-		assert.Equal(t, header.ValueLength, header2.ValueLength)
-		assert.Equal(t, header.RecordsPerBucket, header2.RecordsPerBucket)
-		assert.Equal(t, header.NumberOfBuckets, header2.NumberOfBuckets)
-		assert.Equal(t, header.MinBucketNo, header2.MinBucketNo)
-		assert.Equal(t, header.MaxBucketNo, header2.MaxBucketNo)
-		assert.Equal(t, header.FileSize, header2.FileSize)
+		assert.NoError(t, err, "sets bucket record")
 
 		// Clean up
-		_ = f.Close()
-		err = os.Remove(testFile1)
-		assert.NoError(t, err, "remove file")
+		scFiles.CloseFiles()
+		err = scFiles.RemoveFiles()
+		assert.NoError(t, err, "removes files")
+
+		_, err = os.Stat(scConf.MapFileName)
+		assert.True(t, os.IsNotExist(err), "map file removed")
+		_, err = os.Stat(scConf.OvflFileName)
+		assert.True(t, os.IsNotExist(err), "overflow file removed")
 	})
 }
 
-func TestOpenOverflowFile(t *testing.T) {
-	t.Run("opens an existing hash map file", func(t *testing.T) {
+func TestSCFiles_GetBucketRecords(t *testing.T) {
+	t.Run("gets a bucket record from file", func(t *testing.T) {
 		// Prepare
-		f, err := CreateNewOverflowFile(testFile1)
-		assert.NoError(t, err, "create new file")
+		scConf := SCFilesConf{
+			MapFileName:      "test-map.bin",
+			OvflFileName:     "test-ovfl.bin",
+			KeyLength:        16,
+			ValueLength:      10,
+			RecordsPerBucket: 2,
+			FileSize:         2048,
+		}
 
-		_ = f.Close()
+		header := model.Header{
+			InternalAlg:       false,
+			InitialUniqueKeys: 10,
+			KeyLength:         16,
+			ValueLength:       10,
+			RecordsPerBucket:  2,
+			NumberOfBuckets:   5,
+			MinBucketNo:       0,
+			MaxBucketNo:       4,
+			FileSize:          2048,
+		}
+
+		scFiles, err := NewSCFiles(scConf, header)
+		assert.NoError(t, err, "create new SCFiles instance")
+
+		record := model.Record{
+			InUse:         true,
+			RecordAddress: 1024 + conf.BucketHeaderLength,
+			Key:           []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
+			Value:         []byte{16, 17, 18, 19, 20, 21, 22, 23, 24, 25},
+		}
+
+		err = scFiles.SetBucketRecord(record)
+		assert.NoError(t, err, "sets bucket record")
 
 		// Execute
-		f, err = OpenOverflowFile(testFile1)
+		bucket, err := scFiles.GetBucketRecords(0)
 
 		// Check
-		assert.NoError(t, err, "open overflow file")
-		assert.NotNil(t, f, "got file pointer")
+		assert.NoError(t, err, "gets bucket record")
+		assert.True(t, bucket.Records[0].InUse, "record 0 in use")
+		assert.True(t, utils.IsEqual(record.Key, bucket.Records[0].Key), "record key preserved")
+		assert.True(t, utils.IsEqual(record.Value, bucket.Records[0].Value), "record value preserved")
+		assert.Equal(t, record.RecordAddress, bucket.Records[0].RecordAddress, "correct records address for record 0")
+		assert.False(t, bucket.Records[1].InUse, "record 1 not in use")
+		assert.False(t, bucket.HasOverflow, "bucket has no overflow")
+		assert.Equal(t, int64(0), bucket.OverflowAddress, "bucket overflow address correct")
 
 		// Clean up
-		_ = f.Close()
-		err = os.Remove(testFile1)
-		assert.NoError(t, err, "remove file")
+		scFiles.CloseFiles()
+		err = scFiles.RemoveFiles()
+		assert.NoError(t, err, "removes files")
+
+		_, err = os.Stat(scConf.MapFileName)
+		assert.True(t, os.IsNotExist(err), "map file removed")
+		_, err = os.Stat(scConf.OvflFileName)
+		assert.True(t, os.IsNotExist(err), "overflow file removed")
 	})
 }
 
-func TestNewBucketOverflow(t *testing.T) {
+func TestSCFiles_NewBucketOverflow(t *testing.T) {
 	t.Run("adds new overflow record to file", func(t *testing.T) {
 		// Prepare
-		f, err := CreateNewOverflowFile(testFile1)
-		assert.NoError(t, err, "create new file")
+		scConf := SCFilesConf{
+			MapFileName:      "test-map.bin",
+			OvflFileName:     "test-ovfl.bin",
+			KeyLength:        16,
+			ValueLength:      10,
+			RecordsPerBucket: 2,
+			FileSize:         2048,
+		}
+
+		header := model.Header{
+			InternalAlg:       false,
+			InitialUniqueKeys: 10,
+			KeyLength:         16,
+			ValueLength:       10,
+			RecordsPerBucket:  2,
+			NumberOfBuckets:   5,
+			MinBucketNo:       0,
+			MaxBucketNo:       4,
+			FileSize:          2048,
+		}
+
+		scFiles, err := NewSCFiles(scConf, header)
+		assert.NoError(t, err, "create new SCFiles instance")
 
 		key := []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
 		value := []byte{16, 17, 18, 19, 20, 21, 22, 23, 24, 25}
 
 		// Execute
-		overflowAddress, err := NewBucketOverflow(f, key, value, 16, 10)
+		ovflAddress, err := scFiles.NewBucketOverflow(key, value)
 
 		// Check
-		assert.NoError(t, err, "add record to overflow file")
-		assert.Equal(t, conf.OvflFileHeaderLength, overflowAddress)
+		assert.NoError(t, err, "adds new bucket overflow")
+		assert.Equal(t, conf.OvflFileHeaderLength, ovflAddress, "correct overflow address")
 
 		// Clean up
-		_ = f.Close()
-		err = os.Remove(testFile1)
-		assert.NoError(t, err, "remove file")
+		scFiles.CloseFiles()
+		err = scFiles.RemoveFiles()
+		assert.NoError(t, err, "removes files")
+
+		_, err = os.Stat(scConf.MapFileName)
+		assert.True(t, os.IsNotExist(err), "map file removed")
+		_, err = os.Stat(scConf.OvflFileName)
+		assert.True(t, os.IsNotExist(err), "overflow file removed")
 	})
 }
 
-func TestSetBucketOverflowAddress(t *testing.T) {
+func TestSCFiles_SetBucketOverflowAddress(t *testing.T) {
 	t.Run("sets overflow address to file", func(t *testing.T) {
 		// Prepare
-		f, err := CreateNewHashMapFile(testFile1, 2048)
-		assert.NoError(t, err, "create new file")
+		scConf := SCFilesConf{
+			MapFileName:      "test-map.bin",
+			OvflFileName:     "test-ovfl.bin",
+			KeyLength:        16,
+			ValueLength:      10,
+			RecordsPerBucket: 2,
+			FileSize:         2048,
+		}
 
-		// execute
-		err = SetBucketOverflowAddress(f, 1024, 3000)
+		header := model.Header{
+			InternalAlg:       false,
+			InitialUniqueKeys: 10,
+			KeyLength:         16,
+			ValueLength:       10,
+			RecordsPerBucket:  2,
+			NumberOfBuckets:   5,
+			MinBucketNo:       0,
+			MaxBucketNo:       4,
+			FileSize:          2048,
+		}
 
-		// Check
-		assert.NoError(t, err, "set overflow address to file")
+		scFiles, err := NewSCFiles(scConf, header)
+		assert.NoError(t, err, "create new SCFiles instance")
 
-		_, err = f.Seek(1024, io.SeekStart)
-		assert.NoError(t, err, "seek to bucket address")
-
-		buf := make([]byte, 8)
-		_, err = f.Read(buf)
-		assert.NoError(t, err, "read at bucket address")
-		assert.Equal(t, uint64(3000), binary.LittleEndian.Uint64(buf), "correct overflow address")
+		// Execute
+		err = scFiles.SetBucketOverflowAddress(conf.MapFileHeaderLength, conf.OvflFileHeaderLength)
+		assert.NoError(t, err, "sets overflow address in bucket")
 
 		// Clean up
-		_ = f.Close()
-		err = os.Remove(testFile1)
-		assert.NoError(t, err, "remove file")
+		scFiles.CloseFiles()
+		err = scFiles.RemoveFiles()
+		assert.NoError(t, err, "removes files")
+
+		_, err = os.Stat(scConf.MapFileName)
+		assert.True(t, os.IsNotExist(err), "map file removed")
+		_, err = os.Stat(scConf.OvflFileName)
+		assert.True(t, os.IsNotExist(err), "overflow file removed")
 	})
 }
 
-func TestGetOverflowRecord(t *testing.T) {
+func TestSCFiles_GetOverflowRecord(t *testing.T) {
 	t.Run("gets overflow record from file", func(t *testing.T) {
 		// Prepare
-		f, err := CreateNewOverflowFile(testFile1)
-		assert.NoError(t, err, "create new file")
+		scConf := SCFilesConf{
+			MapFileName:      "test-map.bin",
+			OvflFileName:     "test-ovfl.bin",
+			KeyLength:        16,
+			ValueLength:      10,
+			RecordsPerBucket: 2,
+			FileSize:         2048,
+		}
+
+		header := model.Header{
+			InternalAlg:       false,
+			InitialUniqueKeys: 10,
+			KeyLength:         16,
+			ValueLength:       10,
+			RecordsPerBucket:  2,
+			NumberOfBuckets:   5,
+			MinBucketNo:       0,
+			MaxBucketNo:       4,
+			FileSize:          2048,
+		}
+
+		scFiles, err := NewSCFiles(scConf, header)
+		assert.NoError(t, err, "create new SCFiles instance")
 
 		key := []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
 		value := []byte{16, 17, 18, 19, 20, 21, 22, 23, 24, 25}
 
-		_, err = NewBucketOverflow(f, key, value, 16, 10)
-		assert.NoError(t, err, "add record to overflow file")
+		ovflAddress, err := scFiles.NewBucketOverflow(key, value)
+		assert.NoError(t, err, "adds new bucket overflow")
 
 		// Execute
-		record2, err := GetOverflowRecord(f, conf.OvflFileHeaderLength, 16, 10)
+		record, err := scFiles.GetOverflowRecord(ovflAddress)
 
 		// Check
-		assert.NoError(t, err, "get record from overflow file")
-		assert.True(t, record2.InUse)
-		assert.True(t, record2.IsOverflow)
-		assert.Equal(t, conf.OvflFileHeaderLength, record2.RecordAddress)
-		assert.Equal(t, int64(0), record2.NextOverflow)
-		assert.True(t, utils.IsEqual(key, record2.Key), "key is correct in record")
-		assert.True(t, utils.IsEqual(value, record2.Value), "value is correct in record")
+		assert.NoError(t, err, "gets overflow record")
+		assert.True(t, record.InUse, "record is in use")
+		assert.True(t, record.IsOverflow, "record is overflow")
+		assert.Equal(t, conf.OvflFileHeaderLength, record.RecordAddress, "record has correct address")
+		assert.True(t, utils.IsEqual(key, record.Key), "key is preserved")
+		assert.True(t, utils.IsEqual(value, record.Value), "value is preserved")
 
 		// Clean up
-		_ = f.Close()
-		err = os.Remove(testFile1)
-		assert.NoError(t, err, "remove file")
+		scFiles.CloseFiles()
+		err = scFiles.RemoveFiles()
+		assert.NoError(t, err, "removes files")
+
+		_, err = os.Stat(scConf.MapFileName)
+		assert.True(t, os.IsNotExist(err), "map file removed")
+		_, err = os.Stat(scConf.OvflFileName)
+		assert.True(t, os.IsNotExist(err), "overflow file removed")
 	})
 }
 
-func TestSetOverflowRecord(t *testing.T) {
+func TestSCFiles_SetOverflowRecord(t *testing.T) {
 	t.Run("sets overflow record in file", func(t *testing.T) {
 		// Prepare
-		f, err := CreateNewOverflowFile(testFile1)
-		assert.NoError(t, err, "create new file")
+		scConf := SCFilesConf{
+			MapFileName:      "test-map.bin",
+			OvflFileName:     "test-ovfl.bin",
+			KeyLength:        16,
+			ValueLength:      10,
+			RecordsPerBucket: 2,
+			FileSize:         2048,
+		}
 
-		err = f.Truncate(2048)
-		assert.NoError(t, err, "extend file")
+		header := model.Header{
+			InternalAlg:       false,
+			InitialUniqueKeys: 10,
+			KeyLength:         16,
+			ValueLength:       10,
+			RecordsPerBucket:  2,
+			NumberOfBuckets:   5,
+			MinBucketNo:       0,
+			MaxBucketNo:       4,
+			FileSize:          2048,
+		}
 
-		record := Record{
+		scFiles, err := NewSCFiles(scConf, header)
+		assert.NoError(t, err, "create new SCFiles instance")
+
+		key := []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
+		value := []byte{16, 17, 18, 19, 20, 21, 22, 23, 24, 25}
+
+		ovflAddress, err := scFiles.NewBucketOverflow(key, value)
+		assert.NoError(t, err, "adds new bucket overflow")
+
+		record := model.Record{
 			InUse:         true,
 			IsOverflow:    true,
-			RecordAddress: conf.OvflFileHeaderLength,
+			RecordAddress: ovflAddress,
 			NextOverflow:  0,
-			Key:           []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
-			Value:         []byte{16, 17, 18, 19, 20, 21, 22, 23, 24, 25},
+			Key:           []byte{15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0},
+			Value:         []byte{25, 24, 23, 22, 21, 20, 19, 18, 17, 16},
 		}
 
 		// Execute
-		err = SetOverflowRecord(f, record, 16, 10)
+		err = scFiles.SetOverflowRecord(record)
 
 		// Check
-		assert.NoError(t, err, "set record in file")
+		assert.NoError(t, err, "sets overflow record")
 
-		record2, err := GetOverflowRecord(f, conf.OvflFileHeaderLength, 16, 10)
-		assert.NoError(t, err, "get record from overflow file")
-		assert.True(t, record2.InUse)
-		assert.True(t, record2.IsOverflow)
-		assert.Equal(t, conf.OvflFileHeaderLength, record2.RecordAddress)
-		assert.Equal(t, int64(0), record2.NextOverflow)
-		assert.True(t, utils.IsEqual(record.Key, record2.Key), "key is correct in record")
-		assert.True(t, utils.IsEqual(record.Value, record2.Value), "value is correct in record")
+		record2, err := scFiles.GetOverflowRecord(ovflAddress)
+		assert.NoError(t, err, "gets overflow record")
+		assert.True(t, record2.InUse, "record is in use")
+		assert.True(t, record2.IsOverflow, "record is overflow")
+		assert.Equal(t, conf.OvflFileHeaderLength, record2.RecordAddress, "record has correct address")
+		assert.True(t, utils.IsEqual(record.Key, record2.Key), "key is preserved")
+		assert.True(t, utils.IsEqual(record.Value, record2.Value), "value is preserved")
 
 		// Clean up
-		_ = f.Close()
-		err = os.Remove(testFile1)
-		assert.NoError(t, err, "remove file")
+		scFiles.CloseFiles()
+		err = scFiles.RemoveFiles()
+		assert.NoError(t, err, "removes files")
+
+		_, err = os.Stat(scConf.MapFileName)
+		assert.True(t, os.IsNotExist(err), "map file removed")
+		_, err = os.Stat(scConf.OvflFileName)
+		assert.True(t, os.IsNotExist(err), "overflow file removed")
 	})
 }
 
-func TestAppendOverflowRecord(t *testing.T) {
+func TestSCFiles_AppendOverflowRecord(t *testing.T) {
 	t.Run("appends overflow record in file", func(t *testing.T) {
 		// Prepare
-		f, err := CreateNewOverflowFile(testFile1)
-		assert.NoError(t, err, "create new file")
-
-		err = f.Truncate(2048)
-		assert.NoError(t, err, "extend file")
-
-		record := Record{
-			InUse:         true,
-			IsOverflow:    true,
-			RecordAddress: conf.OvflFileHeaderLength,
-			NextOverflow:  0,
-			Key:           []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
-			Value:         []byte{16, 17, 18, 19, 20, 21, 22, 23, 24, 25},
+		scConf := SCFilesConf{
+			MapFileName:      "test-map.bin",
+			OvflFileName:     "test-ovfl.bin",
+			KeyLength:        16,
+			ValueLength:      10,
+			RecordsPerBucket: 2,
+			FileSize:         2048,
 		}
 
-		err = SetOverflowRecord(f, record, 16, 10)
-		assert.NoError(t, err, "set record in file")
+		header := model.Header{
+			InternalAlg:       false,
+			InitialUniqueKeys: 10,
+			KeyLength:         16,
+			ValueLength:       10,
+			RecordsPerBucket:  2,
+			NumberOfBuckets:   5,
+			MinBucketNo:       0,
+			MaxBucketNo:       4,
+			FileSize:          2048,
+		}
 
-		key2 := []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
-		value2 := []byte{16, 17, 18, 19, 20, 21, 22, 23, 24, 25}
+		scFiles, err := NewSCFiles(scConf, header)
+		assert.NoError(t, err, "create new SCFiles instance")
+
+		key := []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
+		value := []byte{16, 17, 18, 19, 20, 21, 22, 23, 24, 25}
+
+		ovflAddress, err := scFiles.NewBucketOverflow(key, value)
+		assert.NoError(t, err, "adds new bucket overflow")
+
+		record, err := scFiles.GetOverflowRecord(ovflAddress)
+		assert.NoError(t, err, "gets overflow record")
+
+		key2 := []byte{15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0}
+		value2 := []byte{25, 24, 23, 22, 21, 20, 19, 18, 17, 16}
 
 		// Execute
-		err = AppendOverflowRecord(f, record, key2, value2, 16, 10)
-
-		// check
-		assert.NoError(t, err, "append record to file")
-
-		record3, err := GetOverflowRecord(f, conf.OvflFileHeaderLength, 16, 10)
-		assert.NoError(t, err, "get linking record from file")
-		assert.Equal(t, int64(2048), record3.NextOverflow, "correct next overflow address")
-
-		record4, err := GetOverflowRecord(f, record3.NextOverflow, 16, 10)
-		assert.NoError(t, err, "get appended record from file")
-		assert.True(t, record4.InUse)
-		assert.True(t, record4.IsOverflow)
-		assert.Equal(t, int64(2048), record4.RecordAddress)
-		assert.Equal(t, int64(0), record4.NextOverflow)
-		assert.True(t, utils.IsEqual(record.Key, record4.Key), "key is correct in record")
-		assert.True(t, utils.IsEqual(record.Value, record4.Value), "value is correct in record")
-
-		// Clean up
-		_ = f.Close()
-		err = os.Remove(testFile1)
-		assert.NoError(t, err, "remove file")
-	})
-}
-
-func TestGetBucketOverflowAddress(t *testing.T) {
-	t.Run("sets overflow address to file", func(t *testing.T) {
-		// Prepare
-		f, err := CreateNewHashMapFile(testFile1, 2048)
-		assert.NoError(t, err, "create new file")
-
-		err = SetBucketOverflowAddress(f, 1144, 3000)
-		assert.NoError(t, err, "set overflow address to file")
-
-		// execute
-		overflowAddress, err := GetBucketOverflowAddress(f, 2, 26, 2)
+		err = scFiles.AppendOverflowRecord(record, key2, value2)
 
 		// Check
-		assert.NoError(t, err, "get overflow address from file")
-		assert.Equal(t, int64(3000), overflowAddress, "correct overflow address")
+		assert.NoError(t, err, "appends overflow record")
+
+		record, err = scFiles.GetOverflowRecord(ovflAddress)
+		assert.NoError(t, err, "gets overflow record")
+		assert.NotEqualf(t, int64(0), record.NextOverflow, "has next overflow address")
+
+		record2, err := scFiles.GetOverflowRecord(record.NextOverflow)
+		assert.NoError(t, err, "gets next overflow record")
+		assert.Equalf(t, int64(0), record2.NextOverflow, "has no next overflow address")
+		assert.True(t, utils.IsEqual(key2, record2.Key), "key is preserved")
+		assert.True(t, utils.IsEqual(value2, record2.Value), "value is preserved")
 
 		// Clean up
-		_ = f.Close()
-		err = os.Remove(testFile1)
-		assert.NoError(t, err, "remove file")
+		scFiles.CloseFiles()
+		err = scFiles.RemoveFiles()
+		assert.NoError(t, err, "removes files")
+
+		_, err = os.Stat(scConf.MapFileName)
+		assert.True(t, os.IsNotExist(err), "map file removed")
+		_, err = os.Stat(scConf.OvflFileName)
+		assert.True(t, os.IsNotExist(err), "overflow file removed")
 	})
 }

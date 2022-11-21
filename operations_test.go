@@ -5,7 +5,7 @@ package filehashmap
 import (
 	"fmt"
 	"github.com/gostonefire/filehashmap/internal/conf"
-	"github.com/gostonefire/filehashmap/internal/file"
+	"github.com/gostonefire/filehashmap/internal/model"
 	"github.com/gostonefire/filehashmap/internal/utils"
 	"github.com/stretchr/testify/assert"
 	"math/rand"
@@ -102,7 +102,7 @@ func TestSet(t *testing.T) {
 		}
 
 		// Check
-		var record file.Record
+		var record model.Record
 		for i := 0; i < 2; i++ {
 			record, err = fhm.get(buf[i][:16])
 			assert.NoError(t, err, fmt.Sprintf("get record %d in file", i))
@@ -259,7 +259,7 @@ func TestOverflowIterator(t *testing.T) {
 		// Check
 		assert.NoError(t, err, "get iterator")
 
-		var record file.Record
+		var record model.Record
 		for i := 2; i < 5; i++ {
 			assert.True(t, iter.hasNext(), fmt.Sprintf("iteration %d has overflow record", i-2))
 
