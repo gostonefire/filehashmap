@@ -1,10 +1,9 @@
 //go:build unit
 
-package file
+package scres
 
 import (
 	"encoding/binary"
-	"github.com/gostonefire/filehashmap/internal/conf"
 	"github.com/gostonefire/filehashmap/internal/model"
 	"github.com/gostonefire/filehashmap/internal/utils"
 	"github.com/stretchr/testify/assert"
@@ -14,16 +13,16 @@ import (
 func TestBytesToHeader(t *testing.T) {
 	t.Run("converts between bytes and Header struct", func(t *testing.T) {
 		// Prepare
-		buf := make([]byte, conf.MapFileHeaderLength)
-		buf[conf.BucketAlgorithmOffset] = 1
-		binary.LittleEndian.PutUint64(buf[conf.InitialUniqueKeysOffset:], 1000)
-		binary.LittleEndian.PutUint32(buf[conf.KeyLengthOffset:], 16)
-		binary.LittleEndian.PutUint32(buf[conf.ValueLengthOffset:], 10)
-		binary.LittleEndian.PutUint16(buf[conf.RecordsPerBucketOffset:], 2)
-		binary.LittleEndian.PutUint64(buf[conf.NumberOfBucketsOffset:], 500)
-		binary.LittleEndian.PutUint64(buf[conf.MinBucketNoOffset:], 0)
-		binary.LittleEndian.PutUint64(buf[conf.MaxBucketNoOffset:], 499)
-		binary.LittleEndian.PutUint64(buf[conf.FileSizeOffset:], 100000)
+		buf := make([]byte, mapFileHeaderLength)
+		buf[bucketAlgorithmOffset] = 1
+		binary.LittleEndian.PutUint64(buf[initialUniqueKeysOffset:], 1000)
+		binary.LittleEndian.PutUint32(buf[keyLengthOffset:], 16)
+		binary.LittleEndian.PutUint32(buf[valueLengthOffset:], 10)
+		binary.LittleEndian.PutUint16(buf[recordsPerBucketOffset:], 2)
+		binary.LittleEndian.PutUint64(buf[numberOfBucketsOffset:], 500)
+		binary.LittleEndian.PutUint64(buf[minBucketNoOffset:], 0)
+		binary.LittleEndian.PutUint64(buf[maxBucketNoOffset:], 499)
+		binary.LittleEndian.PutUint64(buf[fileSizeOffset:], 100000)
 
 		// execute
 		header := bytesToHeader(buf)
@@ -59,15 +58,15 @@ func TestHeaderToBytes(t *testing.T) {
 		buf := headerToBytes(header)
 
 		// Check
-		internalHash := buf[conf.BucketAlgorithmOffset] == 1
-		initialUniqueValues := int64(binary.LittleEndian.Uint64(buf[conf.InitialUniqueKeysOffset:]))
-		keyLength := int64(binary.LittleEndian.Uint32(buf[conf.KeyLengthOffset:]))
-		valueLength := int64(binary.LittleEndian.Uint32(buf[conf.ValueLengthOffset:]))
-		recordsPerBucket := int64(binary.LittleEndian.Uint16(buf[conf.RecordsPerBucketOffset:]))
-		numberOfBuckets := int64(binary.LittleEndian.Uint64(buf[conf.NumberOfBucketsOffset:]))
-		minBucketNo := int64(binary.LittleEndian.Uint64(buf[conf.MinBucketNoOffset:]))
-		maxBucketNo := int64(binary.LittleEndian.Uint64(buf[conf.MaxBucketNoOffset:]))
-		fileSize := int64(binary.LittleEndian.Uint64(buf[conf.FileSizeOffset:]))
+		internalHash := buf[bucketAlgorithmOffset] == 1
+		initialUniqueValues := int64(binary.LittleEndian.Uint64(buf[initialUniqueKeysOffset:]))
+		keyLength := int64(binary.LittleEndian.Uint32(buf[keyLengthOffset:]))
+		valueLength := int64(binary.LittleEndian.Uint32(buf[valueLengthOffset:]))
+		recordsPerBucket := int64(binary.LittleEndian.Uint16(buf[recordsPerBucketOffset:]))
+		numberOfBuckets := int64(binary.LittleEndian.Uint64(buf[numberOfBucketsOffset:]))
+		minBucketNo := int64(binary.LittleEndian.Uint64(buf[minBucketNoOffset:]))
+		maxBucketNo := int64(binary.LittleEndian.Uint64(buf[maxBucketNoOffset:]))
+		fileSize := int64(binary.LittleEndian.Uint64(buf[fileSizeOffset:]))
 
 		assert.True(t, internalHash)
 		assert.Equal(t, header.InitialUniqueKeys, initialUniqueValues)
@@ -97,9 +96,9 @@ func TestBytesToBucket(t *testing.T) {
 		assert.True(t, bucket.HasOverflow)
 		assert.Equal(t, 2, len(bucket.Records), "two records in bucket")
 		assert.True(t, bucket.Records[0].InUse)
-		assert.Equal(t, 1000+conf.BucketHeaderLength, bucket.Records[0].RecordAddress)
+		assert.Equal(t, 1000+bucketHeaderLength, bucket.Records[0].RecordAddress)
 
-		keyStart := conf.BucketHeaderLength + 1
+		keyStart := bucketHeaderLength + 1
 		keyEnd := keyStart + 16
 		valueStart := keyEnd
 		valueEnd := valueStart + 10
@@ -107,9 +106,9 @@ func TestBytesToBucket(t *testing.T) {
 		assert.True(t, utils.IsEqual(buf[valueStart:valueEnd], bucket.Records[0].Value), "value is correct in record")
 
 		assert.False(t, bucket.Records[1].InUse)
-		assert.Equal(t, 1000+conf.BucketHeaderLength+27, bucket.Records[1].RecordAddress)
+		assert.Equal(t, 1000+bucketHeaderLength+27, bucket.Records[1].RecordAddress)
 
-		keyStart = conf.BucketHeaderLength + 1 + 27
+		keyStart = bucketHeaderLength + 1 + 27
 		keyEnd = keyStart + 16
 		valueStart = keyEnd
 		valueEnd = valueStart + 10
@@ -134,7 +133,7 @@ func TestOverflowBytesToRecord(t *testing.T) {
 		assert.True(t, record.IsOverflow)
 		assert.Equal(t, int64(1), record.NextOverflow)
 
-		keyStart := conf.OverflowAddressLength + conf.InUseFlagBytes
+		keyStart := overflowAddressLength + inUseFlagBytes
 		keyEnd := keyStart + 16
 		valueStart := keyEnd
 		valueEnd := valueStart + 10
@@ -157,10 +156,10 @@ func TestRecordToOverflowBytes(t *testing.T) {
 
 		// Execute
 		buf2 := recordToOverflowBytes(record, 16, 10)
-		assert.Equal(t, conf.RecordInUse, buf2[conf.OverflowAddressLength])
+		assert.Equal(t, recordInUse, buf2[overflowAddressLength])
 		assert.Equal(t, uint64(2000), binary.LittleEndian.Uint64(buf2))
 
-		keyStart := conf.OverflowAddressLength + conf.InUseFlagBytes
+		keyStart := overflowAddressLength + inUseFlagBytes
 		keyEnd := keyStart + 16
 		valueStart := keyEnd
 		valueEnd := valueStart + 10

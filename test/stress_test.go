@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"github.com/gostonefire/filehashmap"
 	"github.com/gostonefire/filehashmap/internal/utils"
+	"github.com/gostonefire/filehashmap/storage"
 	"github.com/stretchr/testify/assert"
 	"io"
 	"math/rand"
@@ -145,7 +146,7 @@ func getTestdata(fileName string, fhm *filehashmap.FileHashMap, shouldNotExist b
 		if shouldNotExist {
 			if err == nil {
 				return fmt.Errorf("get should not get data")
-			} else if !errors.Is(err, filehashmap.NoRecordFound{}) {
+			} else if !errors.Is(err, storage.NoRecordFound{}) {
 				return err
 			}
 		} else {
@@ -175,8 +176,6 @@ func TestStress(t *testing.T) {
 		// Prepare file hash map
 		fhm, _, err := filehashmap.NewFileHashMap("test", 1000000, 20, 10, nil)
 		assert.NoError(t, err, "create file hash map")
-		err = fhm.CreateNewFiles()
-		assert.NoError(t, err, "create hash map files")
 
 		// Set first two sets of test data
 		err = setTestdata("testdata_1.txt", fhm)
@@ -228,7 +227,7 @@ func TestStress(t *testing.T) {
 		assert.NoError(t, err, "reorg files")
 
 		// Open reorganized files
-		fhm, _, err = filehashmap.NewFromExistingFiles("test", nil)
+		fhm, _, err = filehashmap.NewFromExistingFiles("test-reorg", nil)
 		assert.NoError(t, err, "open reorganized files")
 
 		// Get stats
@@ -244,7 +243,7 @@ func TestStress(t *testing.T) {
 		assert.NoError(t, err, "remove files")
 
 		// Remove original files
-		fhm, _, err = filehashmap.NewFromExistingFiles("test-original", nil)
+		fhm, _, err = filehashmap.NewFromExistingFiles("test", nil)
 		assert.NoError(t, err, "open original files")
 
 		err = fhm.RemoveFiles()

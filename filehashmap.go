@@ -2,47 +2,28 @@ package filehashmap
 
 import (
 	"fmt"
-	"github.com/gostonefire/filehashmap/internal/conf"
-	"github.com/gostonefire/filehashmap/internal/file"
-	"github.com/gostonefire/filehashmap/internal/hash"
+	"github.com/gostonefire/filehashmap/interfaces"
 	"github.com/gostonefire/filehashmap/internal/model"
+	"github.com/gostonefire/filehashmap/internal/storage/scres"
 	"github.com/gostonefire/filehashmap/internal/utils"
-	"math"
-	"os"
 )
 
-// FileProcessing - Interface for any file processing implementation
-type FileProcessing interface {
+// FileManagement - Interface for any file management implementation
+type FileManagement interface {
 	CloseFiles()
 	RemoveFiles() (err error)
-	SetBucketRecord(record model.Record) (err error)
-	GetBucketRecords(bucketNo int64) (bucket model.Bucket, err error)
-	SetBucketOverflowAddress(bucketAddress, overflowAddress int64) (err error)
-	NewBucketOverflow(key, value []byte) (overflowAddress int64, err error)
-	SetOverflowRecord(record model.Record) (err error)
-	GetOverflowRecord(recordAddress int64) (record model.Record, err error)
-	AppendOverflowRecord(linkingRecord model.Record, key, value []byte) (err error)
+	Get(keyRecord model.Record) (record model.Record, err error)
+	Set(record model.Record) (err error)
+	Delete(record model.Record) (err error)
+	GetBucket(bucketNo int64) (bucket model.Bucket, overflowIterator *scres.OverflowRecords, err error)
+	GetStorageParameters() (params model.StorageParameters)
 }
 
-// BucketAlgorithm - Interface that permits an implementation using the FileHashMap to supply a custom bucket
-// selection algorithm suited for its particular distribution of keys.
-// The internally used algorithm is implemented using crc32.ChecksumIEEE to create a hash value over the key and
-// then applying bucket = hash & (1<<exp - 1) to get the bucket number, where 1<<exp (2 to the power of exp)
-// is the total number of buckets to distribute over.
-type BucketAlgorithm interface {
-	// BucketNumber - Given key it generates a bucket number between minValue and maxValue (inclusive)
-	// Any number returned outside the minValue/maxValue (inclusive) range will result in an error down stream.
-	BucketNumber(key []byte) int64
-	// BucketNumberRange - Returns the min and max (inclusive) that BucketNumber will ever return.
-	BucketNumberRange() (minValue, maxValue int64)
-}
-
-// HashMapInfo - Information structure containing important information that should be studied before
-// calling the file create function.
+// HashMapInfo - Information structure containing some information about the hash map created
 //   - RecordsPerBucket is the number of record entries available in each bucket
 //   - AverageBucketFillFactor is the average fill factor given initial unique values and total number of available records in all buckets
 //   - NumberOfBuckets is the total number of available buckets in the file hash map
-//   - FileSize is the total size of the file to create, it is TrueRecordLength * RecordsPerBucket * NumberOfBuckets + conf.MapFileHeaderLength.
+//   - FileSize is the total size of the map file created.
 type HashMapInfo struct {
 	RecordsPerBucket        int64
 	AverageBucketFillFactor float64
@@ -64,19 +45,8 @@ type HashMapStat struct {
 
 // FileHashMap - The main implementation struct
 type FileHashMap struct {
-	bucketAlg         BucketAlgorithm
-	fileProcessing    FileProcessing
-	mapFileName       string
-	ovflFileName      string
-	initialUniqueKeys int64
-	keyLength         int64
-	valueLength       int64
-	recordsPerBucket  int64
-	numberOfBuckets   int64
-	minBucketNo       int64
-	maxBucketNo       int64
-	fileSize          int64
-	internalAlg       bool
+	fileManagement FileManagement
+	name           string
 	// CloseFiles - Closes the hash map file and the ovfl file. Use this preferably in a "defer" directly
 	// after a CreateNewFile or NewFromExistingFile.
 	CloseFiles func()
@@ -85,38 +55,31 @@ type FileHashMap struct {
 	RemoveFiles func() error
 }
 
-// NewFileHashMap - Returns a new file prepared to cover a theoretical initial number of unique values.
+// NewFileHashMap - Returns a new file (or set of files) prepared to cover a theoretical initial number of unique values.
 // If the number is too low or the spread of the values are not uniform it may be that buckets will be overfilled.
 // An overfilled bucket will result in data put in an overflow file which will still work but requires more
 // disk operations.
-//   - name is the name of the file hash map and will be used when the function CreateNewFiles are used (se documentation for that function)
+//   - name is the name of the file hash map and will be used to form file name(s)
 //   - initialUniqueKeys is the theoretical max number of unique keys to be expected, in theory the limit will provide for no overfilled buckets, in practice it will most likely occur.
 //   - keyLength is the length of the key part in a record
 //   - valueLength is the length of the value part in a record
-//   - bucketAlgorithm is an optional entry to provide a custom bucket selection algorithm following the BucketAlgorithm interface.
+//   - hashAlgorithm is an optional entry to provide a custom hash algorithm following the HashAlgorithm interfaces.
 //
 // It returns:
 //   - fileHashMap is a pointer to a FileHashMap struct
-//   - hashMapInfo is a struct containing some data regarding the hash map to create. Most important is probably the file size to avoid extreme file sizes by mistake.
+//   - hashMapInfo is a HashMapInfo struct containing some data regarding the hash map created.
 //   - err is a normal go Error which should be nil if everything went ok
 func NewFileHashMap(
 	name string,
 	initialUniqueKeys int64,
 	keyLength int64,
 	valueLength int64,
-	bucketAlgorithm BucketAlgorithm,
+	hashAlgorithm hashfunc.HashAlgorithm,
 ) (
 	fileHashMap *FileHashMap,
 	hashMapInfo HashMapInfo,
 	err error,
 ) {
-
-	// If no BucketAlgorithm was given then use the default internal
-	var internalAlg bool
-	if bucketAlgorithm == nil {
-		bucketAlgorithm = hash.NewBucketAlgorithm(initialUniqueKeys)
-		internalAlg = true
-	}
 
 	// Check if initialUniqueKeys is valid
 	if initialUniqueKeys <= 0 {
@@ -144,162 +107,82 @@ func NewFileHashMap(
 		return
 	}
 
-	// Calculate the hash map file various parameters
-	trueRecordLength := keyLength + valueLength + conf.InUseFlagBytes
-	minBucketNo, maxBucketNo := bucketAlgorithm.BucketNumberRange()
-	numberOfBuckets := maxBucketNo - minBucketNo + 1
-	recordsPerBucket := int64(math.Ceil(float64(initialUniqueKeys) / float64(numberOfBuckets)))
-	bucketLength := trueRecordLength*recordsPerBucket + conf.BucketHeaderLength
-	fileSize := bucketLength*numberOfBuckets + conf.MapFileHeaderLength
-	fillFactor := float64(initialUniqueKeys) / float64(recordsPerBucket*numberOfBuckets)
+	fpConf := scres.SCFilesConf{
+		Name:              name,
+		InitialUniqueKeys: initialUniqueKeys,
+		KeyLength:         keyLength,
+		ValueLength:       valueLength,
+		HashAlgorithm:     hashAlgorithm,
+	}
+
+	var fm FileManagement
+	fm, err = scres.NewSCFiles(fpConf)
+	if err != nil {
+		_ = fm.RemoveFiles()
+		return
+	}
 
 	// Prepare return data
 	fileHashMap = &FileHashMap{
-		bucketAlg:         bucketAlgorithm,
-		mapFileName:       fmt.Sprintf("%s-map.bin", name),
-		ovflFileName:      fmt.Sprintf("%s-ovfl.bin", name),
-		initialUniqueKeys: initialUniqueKeys,
-		keyLength:         keyLength,
-		valueLength:       valueLength,
-		recordsPerBucket:  recordsPerBucket,
-		numberOfBuckets:   numberOfBuckets,
-		minBucketNo:       minBucketNo,
-		maxBucketNo:       maxBucketNo,
-		fileSize:          fileSize,
-		internalAlg:       internalAlg,
+		fileManagement: fm,
+		name:           name,
+		CloseFiles:     func() { fm.CloseFiles() },
+		RemoveFiles: func() error {
+			fm.CloseFiles()
+			return fm.RemoveFiles()
+		},
 	}
 
+	sp := fm.GetStorageParameters()
+
 	hashMapInfo = HashMapInfo{
-		RecordsPerBucket:        recordsPerBucket,
-		AverageBucketFillFactor: fillFactor,
-		NumberOfBuckets:         numberOfBuckets,
-		FileSize:                fileSize,
+		RecordsPerBucket:        sp.RecordsPerBucket,
+		AverageBucketFillFactor: sp.FillFactor,
+		NumberOfBuckets:         sp.NumberOfBuckets,
+		FileSize:                sp.MapFileSize,
 	}
 
 	return
 }
 
 // NewFromExistingFiles - Opens an existing file containing a hash map. The file must have a valid header, and if the
-// file was created and used together with a custom bucket algorithm, also that same algorithm has to be supplied.
+// file was created and used together with a custom hash algorithm, also that same algorithm has to be supplied.
 //   - name is the name of an existing hash map.
-//   - bucketAlgorithm is an optional entry to provide a custom bucket selection algorithm following the BucketAlgorithm interface.
+//   - hashAlgorithm is an optional entry to provide a custom hash algorithm following the hashfunc.HashAlgorithm interface.
 //
 // It returns:
 //   - fileHashMap is a pointer to a FileHashMap struct
-//   - hashMapInfo is a struct containing some data regarding the hash map to create.
+//   - hashMapInfo is a HashMapInfo struct containing some data regarding the hash map opened.
 //   - err is a normal Go Error which should be nil if everything went ok
-func NewFromExistingFiles(name string, bucketAlgorithm BucketAlgorithm) (
+func NewFromExistingFiles(name string, hashAlgorithm hashfunc.HashAlgorithm) (
 	fileHashMap *FileHashMap,
 	hashMapInfo HashMapInfo,
 	err error,
 ) {
-	var header model.Header
-	var fp FileProcessing
-	mapFileName := fmt.Sprintf("%s-map.bin", name)
-	ovflFileName := fmt.Sprintf("%s-ovfl.bin", name)
-
-	fp, header, err = file.NewSCFilesFromExistingFiles(mapFileName, ovflFileName)
+	var fm FileManagement
+	fm, err = scres.NewSCFilesFromExistingFiles(name, hashAlgorithm)
 	if err != nil {
 		return
-	}
-
-	// Check for mismatch in choice of bucket algorithm
-	if header.InternalAlg && bucketAlgorithm != nil {
-		fp.CloseFiles()
-		err = fmt.Errorf("seems the hash map file was used with the internal hash algorithm but an external was given")
-		return
-	}
-	if !header.InternalAlg && bucketAlgorithm == nil {
-		fp.CloseFiles()
-		err = fmt.Errorf("seems the hash map file was used with the external hash algorithm but no external was given")
-		return
-	}
-
-	// If no BucketAlgorithm was given then use the default internal
-	if bucketAlgorithm == nil {
-		bucketAlgorithm = hash.NewBucketAlgorithm(header.InitialUniqueKeys)
 	}
 
 	// Prepare return data
 	fileHashMap = &FileHashMap{
-		bucketAlg:         bucketAlgorithm,
-		fileProcessing:    fp,
-		mapFileName:       mapFileName,
-		ovflFileName:      ovflFileName,
-		initialUniqueKeys: header.InitialUniqueKeys,
-		keyLength:         header.KeyLength,
-		valueLength:       header.ValueLength,
-		recordsPerBucket:  header.RecordsPerBucket,
-		numberOfBuckets:   header.NumberOfBuckets,
-		minBucketNo:       header.MinBucketNo,
-		maxBucketNo:       header.MaxBucketNo,
-		fileSize:          header.FileSize,
-		internalAlg:       header.InternalAlg,
-		CloseFiles:        func() { fp.CloseFiles() },
+		fileManagement: fm,
+		name:           name,
+		CloseFiles:     func() { fm.CloseFiles() },
 		RemoveFiles: func() error {
-			fp.CloseFiles()
-			return fp.RemoveFiles()
+			fm.CloseFiles()
+			return fm.RemoveFiles()
 		},
 	}
 
-	fillFactor := float64(header.InitialUniqueKeys) / float64(header.RecordsPerBucket*header.NumberOfBuckets)
+	sp := fm.GetStorageParameters()
 
 	hashMapInfo = HashMapInfo{
-		RecordsPerBucket:        header.RecordsPerBucket,
-		AverageBucketFillFactor: fillFactor,
-		NumberOfBuckets:         header.NumberOfBuckets,
-		FileSize:                header.FileSize,
-	}
-
-	return
-}
-
-// CreateNewFiles - Creates new files according to name given in call to NewFileHashMap, there will be two files
-// created, one fixed sized file of the size that was calculated when instantiating the file hash map and one
-// dynamic that will grow whenever there is overflow in any buckets.
-//
-// If name given in call to NewFileHashMap doesn't contain any path they will end up in from wherever the application
-// has its base path.
-//
-// The two files will be named:
-//   - <name>-map.bin
-//   - <name>-ovfl.bin
-//
-// If the files already exists they will first be truncated to zero and then to calculated length,
-// hence removing all existing data.
-func (F *FileHashMap) CreateNewFiles() (err error) {
-	header := model.Header{
-		InternalAlg:       F.internalAlg,
-		InitialUniqueKeys: F.initialUniqueKeys,
-		KeyLength:         F.keyLength,
-		ValueLength:       F.valueLength,
-		RecordsPerBucket:  F.recordsPerBucket,
-		NumberOfBuckets:   F.numberOfBuckets,
-		MinBucketNo:       F.minBucketNo,
-		MaxBucketNo:       F.maxBucketNo,
-		FileSize:          F.fileSize,
-	}
-
-	fpConf := file.SCFilesConf{
-		MapFileName:      F.mapFileName,
-		OvflFileName:     F.ovflFileName,
-		KeyLength:        F.keyLength,
-		ValueLength:      F.valueLength,
-		RecordsPerBucket: F.recordsPerBucket,
-		FileSize:         F.fileSize,
-	}
-
-	fp, err := file.NewSCFiles(fpConf, header)
-	if err != nil {
-		_ = fp.RemoveFiles()
-		return
-	}
-
-	F.fileProcessing = fp
-	F.CloseFiles = func() { fp.CloseFiles() }
-	F.RemoveFiles = func() error {
-		fp.CloseFiles()
-		return fp.RemoveFiles()
+		RecordsPerBucket:        sp.RecordsPerBucket,
+		AverageBucketFillFactor: sp.FillFactor,
+		NumberOfBuckets:         sp.NumberOfBuckets,
+		FileSize:                sp.MapFileSize,
 	}
 
 	return
@@ -311,29 +194,31 @@ func (F *FileHashMap) CreateNewFiles() (err error) {
 //   - PrependKeyExtension whether to prepend the extra space or append it
 //   - ValueExtension is number of bytes to extend the value with
 //   - PrependValueExtension whether to prepend the extra space or append it
-//   - BucketAlgorithm is the algorithm to use
+//   - NewBucketAlgorithm is the algorithm to use
+//   - OldBucketAlgorithm is the algorithm that was used in the original file hash map
 type ReorgConf struct {
 	InitialUniqueKeys     int64
 	KeyExtension          int64
 	PrependKeyExtension   bool
 	ValueExtension        int64
 	PrependValueExtension bool
-	BucketAlgorithm       BucketAlgorithm
+	NewBucketAlgorithm    hashfunc.HashAlgorithm
+	OldBucketAlgorithm    hashfunc.HashAlgorithm
 }
 
 // ReorgFiles - Is used when existing hash map files needs to reflect new conditions as compared to when they were
 // first created. For instance if the first estimate of initial unique keys was way off and too much data ended up
-// in overflow, or we need to store more data in each record, or perhaps a better bucket algorithm has been found
+// in overflow, or we need to store more data in each record, or perhaps a better hash algorithm has been found
 // for the particular set of data we are processing.
 //
 // The function will first rename the old files by inserting "-original", then create new files. The old files will
 // not be deleted to prevent data loss due to mistakes.
 //
 // The reorganization will happen only if there are detectable changes coming from the ReorgConf struct. If the original
-// file hash map was created with internal BucketAlgorithm and an empty (fields are Go zero values) ReorgConf struct is supplied,
-// the function returns with no processing. But values higher than zero in any of InitialUniqueKeys, KeyExtension or
-// ValueExtension will result in processing. Also, if the existing hash file map was created with custom BucketAlgorithm and
-// BucketAlgorithm is nil, processing will happen. A non nil BucketAlgorithm will always result in processing
+// file hash map was created with internal hashfunc.HashAlgorithm and an empty (fields are Go zero values) ReorgConf struct is supplied,
+// the function returns with no processing. But values higher than zero in any of initialUniqueKeys, KeyExtension or
+// ValueExtension will result in processing. Also, if the existing hash file map was created with custom HashAlgorithm and
+// HashAlgorithm is nil, processing will happen. A non nil HashAlgorithm will always result in processing
 // even if the existing file hash map happens to be created with the exact same.
 //
 // To force a reorganization even if there are no changes to apply through the ReorgConf struct, use the force flag in the
@@ -343,11 +228,7 @@ type ReorgConf struct {
 //   - reorgConfig is an instance of the ReorgConf struct.
 //   - force set to true forces a reorganization regardless of what is changed from the ReorgConf struct
 func ReorgFiles(name string, reorgConf ReorgConf, force bool) (fromHashMapInfo, toHashMapInfo HashMapInfo, err error) {
-	bakName := fmt.Sprintf("%s-original", name)
-	mapFileName := fmt.Sprintf("%s-map.bin", name)
-	ovflFileName := fmt.Sprintf("%s-ovfl.bin", name)
-	bakMapFileName := fmt.Sprintf("%s-map.bin", bakName)
-	bakOvflFileName := fmt.Sprintf("%s-ovfl.bin", bakName)
+	newName := fmt.Sprintf("%s-reorg", name)
 
 	var fromFhm, toFhm *FileHashMap
 
@@ -361,65 +242,50 @@ func ReorgFiles(name string, reorgConf ReorgConf, force bool) (fromHashMapInfo, 
 
 	// Sort out new settings and also make sure there are any changes at all (unless force flag has already overridden that)
 	hasChanges := force
+	sp := fromFhm.fileManagement.GetStorageParameters()
 	var initialUniqueKeys, keyLength, valueLength int64
-	var bucketAlgorithm BucketAlgorithm
-	if fromFhm.initialUniqueKeys != reorgConf.InitialUniqueKeys && reorgConf.InitialUniqueKeys > 0 {
+	var bucketAlgorithm hashfunc.HashAlgorithm
+	if sp.InitialUniqueKeys != reorgConf.InitialUniqueKeys && reorgConf.InitialUniqueKeys > 0 {
 		initialUniqueKeys = reorgConf.InitialUniqueKeys
 		hasChanges = true
 	} else {
-		initialUniqueKeys = fromFhm.initialUniqueKeys
+		initialUniqueKeys = sp.InitialUniqueKeys
 	}
 	if reorgConf.KeyExtension > 0 {
-		keyLength = fromFhm.keyLength + reorgConf.KeyExtension
+		keyLength = sp.KeyLength + reorgConf.KeyExtension
 		hasChanges = true
 	} else {
-		keyLength = fromFhm.keyLength
+		keyLength = sp.KeyLength
 	}
 	if reorgConf.ValueExtension > 0 {
-		valueLength = fromFhm.valueLength + reorgConf.ValueExtension
+		valueLength = sp.ValueLength + reorgConf.ValueExtension
 		hasChanges = true
 	} else {
-		valueLength = fromFhm.valueLength
+		valueLength = sp.ValueLength
 	}
-	if reorgConf.BucketAlgorithm != nil || (reorgConf.BucketAlgorithm == nil && !fromFhm.internalAlg) {
-		bucketAlgorithm = reorgConf.BucketAlgorithm
+	if reorgConf.NewBucketAlgorithm != nil || (reorgConf.NewBucketAlgorithm == nil && !sp.InternalAlgorithm) {
+		bucketAlgorithm = reorgConf.NewBucketAlgorithm
 		hasChanges = true
 	}
 	if !hasChanges {
 		return
 	}
 
-	// Rename files
-	err = os.Rename(mapFileName, bakMapFileName)
-	if err != nil {
-		err = fmt.Errorf("error while renaming existing file %s to %s", mapFileName, bakMapFileName)
-		return
-	}
-	err = os.Rename(ovflFileName, bakOvflFileName)
-	if err != nil {
-		err = fmt.Errorf("error while renaming existing file %s to %s", ovflFileName, bakOvflFileName)
-		return
-	}
-
 	// Open existing (we won't use get/set/pop so whatever bucket algorithm is used in the original files is not important)
-	fromFhm, fromHashMapInfo, err = NewFromExistingFiles(bakName, nil)
+	fromFhm, fromHashMapInfo, err = NewFromExistingFiles(name, reorgConf.OldBucketAlgorithm)
 	if err != nil {
 		return
 	}
 	defer fromFhm.CloseFiles()
 
 	// Create new file hash map
-	toFhm, toHashMapInfo, err = NewFileHashMap(name, initialUniqueKeys, keyLength, valueLength, bucketAlgorithm)
-	if err != nil {
-		return
-	}
-	err = toFhm.CreateNewFiles()
+	toFhm, toHashMapInfo, err = NewFileHashMap(newName, initialUniqueKeys, keyLength, valueLength, bucketAlgorithm)
 	if err != nil {
 		return
 	}
 	defer toFhm.CloseFiles()
 
-	err = reorgRecords(fromFhm, toFhm, reorgConf)
+	err = reorgRecords(fromFhm, toFhm, reorgConf, fromFhm.fileManagement.GetStorageParameters().NumberOfBuckets)
 	if err != nil {
 		return
 	}
@@ -428,13 +294,13 @@ func ReorgFiles(name string, reorgConf ReorgConf, force bool) (fromHashMapInfo, 
 }
 
 // reorgRecords - Reads bucket by bucket, record by record, transforms, and writes to new hash map files
-func reorgRecords(from *FileHashMap, to *FileHashMap, reorgConf ReorgConf) (err error) {
+func reorgRecords(from *FileHashMap, to *FileHashMap, reorgConf ReorgConf, fromNBuckets int64) (err error) {
 	var bucket model.Bucket
 	var record model.Record
-	var iter *OverflowRecords
+	var iter *scres.OverflowRecords
 	var key, value []byte
-	for i := int64(0); i < from.numberOfBuckets; i++ {
-		bucket, iter, err = from.getBucket(i)
+	for i := int64(0); i < fromNBuckets; i++ {
+		bucket, iter, err = from.fileManagement.GetBucket(i)
 		if err != nil {
 			return
 		}
@@ -452,8 +318,8 @@ func reorgRecords(from *FileHashMap, to *FileHashMap, reorgConf ReorgConf) (err 
 		}
 
 		// Records from overflow file
-		for iter.hasNext() {
-			record, err = iter.next()
+		for iter.HasNext() {
+			record, err = iter.Next()
 			if err != nil {
 				return
 			}

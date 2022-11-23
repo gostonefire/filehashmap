@@ -4,7 +4,6 @@ package filehashmap
 
 import (
 	"fmt"
-	"github.com/gostonefire/filehashmap/internal/conf"
 	"github.com/gostonefire/filehashmap/internal/utils"
 	"github.com/stretchr/testify/assert"
 	"math/rand"
@@ -12,104 +11,68 @@ import (
 	"testing"
 )
 
-const testHashMap string = "unittest"
+const testHashMap string = "test"
 
 func TestNewFileHashMap(t *testing.T) {
-	t.Run("creates valid file hash map parameters", func(t *testing.T) {
+	t.Run("creates file hash map", func(t *testing.T) {
 		// Prepare
-		expectedFileSize := (1<<16)*(2*27+conf.BucketHeaderLength) + conf.MapFileHeaderLength
 
 		// Execute
 		fhm, info, err := NewFileHashMap(testHashMap, 100000, 16, 10, nil)
 
 		// Check
-		assert.NoError(t, err)
+		assert.NoError(t, err, "creates file hash map")
+		assert.NotNil(t, fhm.fileManagement, "file management is assigned")
+		assert.Equal(t, testHashMap, fhm.name, "correct name")
 
-		assert.True(t, fhm.internalAlg)
-		assert.Equal(t, int64(100000), fhm.initialUniqueKeys)
-		assert.Equal(t, int64(16), fhm.keyLength)
-		assert.Equal(t, int64(10), fhm.valueLength)
-		assert.Equal(t, int64(2), fhm.recordsPerBucket)
-		assert.Equal(t, int64(65536), fhm.numberOfBuckets)
-		assert.Equal(t, int64(0), fhm.minBucketNo)
-		assert.Equal(t, int64(65535), fhm.maxBucketNo)
-		assert.Equal(t, expectedFileSize, fhm.fileSize)
-		assert.Equal(t, 0.762939453125, info.AverageBucketFillFactor)
-	})
-
-	t.Run("creates valid files", func(t *testing.T) {
-		// Prepare
-		fhm, _, err := NewFileHashMap(testHashMap, 100000, 16, 10, nil)
-		assert.NoError(t, err, "create new file hash map struct")
-
-		// Execute
-		err = fhm.CreateNewFiles()
-
-		// Check
-		assert.NoError(t, err, "create new files")
-
-		stat, err := os.Stat(fhm.ovflFileName)
-		assert.NoError(t, err, "overflow file exists")
-		assert.Equal(t, conf.OvflFileHeaderLength, stat.Size(), "overflow file has correct size")
-
-		stat, err = os.Stat(fhm.mapFileName)
-		assert.NoError(t, err, "map file exists")
-		assert.Equal(t, fhm.fileSize, stat.Size(), "map file has correct size")
+		sp := fhm.fileManagement.GetStorageParameters()
+		assert.Equal(t, sp.RecordsPerBucket, info.RecordsPerBucket, "correct records per bucket in info")
+		assert.Equal(t, sp.FillFactor, info.AverageBucketFillFactor, "correct fill factor in info")
+		assert.Equal(t, sp.NumberOfBuckets, info.NumberOfBuckets, "correct number of buckets in info")
+		assert.Equal(t, sp.MapFileSize, info.FileSize, "correct filesize in info")
+		assert.Equal(t, int64(100000), sp.InitialUniqueKeys, "correct initial unique keys")
+		assert.Equal(t, int64(16), sp.KeyLength, "correct key length")
+		assert.Equal(t, int64(10), sp.ValueLength, "correct value length")
+		assert.True(t, sp.InternalAlgorithm, "has internal hash algorithm")
 
 		// Clean up
 		err = fhm.RemoveFiles()
-		assert.NoError(t, err, "files can be removed after close")
-		_, err = os.Stat(fhm.ovflFileName)
-		assert.Error(t, err, "overflow file is removed")
-		_, err = os.Stat(fhm.mapFileName)
-		assert.Error(t, err, "map file is removed")
+		assert.NoError(t, err, "removes files")
 
+		_, err = os.Stat(fmt.Sprintf("%s-map.bin", testHashMap))
+		assert.True(t, os.IsNotExist(err), "map file removed")
+		_, err = os.Stat(fmt.Sprintf("%s-ovfl.bin", testHashMap))
+		assert.True(t, os.IsNotExist(err), "overflow file removed")
 	})
 }
 
 func TestNewFromExistingFiles(t *testing.T) {
 	t.Run("opens an existing file", func(t *testing.T) {
 		// Prepare
-		fhm, _, err := NewFileHashMap(testHashMap, 100000, 16, 10, nil)
-		assert.NoError(t, err, "create new file hash map struct")
+		fhmInit, infoInit, err := NewFileHashMap(testHashMap, 100000, 16, 10, nil)
+		assert.NoError(t, err, "creates file hash map")
 
-		err = fhm.CreateNewFiles()
-		assert.NoError(t, err, "create new files")
-
-		stat, err := os.Stat(fhm.ovflFileName)
-		assert.NoError(t, err, "overflow file exists")
-		assert.Equal(t, conf.OvflFileHeaderLength, stat.Size(), "overflow file has correct size")
-
-		stat, err = os.Stat(fhm.mapFileName)
-		assert.NoError(t, err, "map file exists")
-		assert.Equal(t, fhm.fileSize, stat.Size(), "map file has correct size")
-
-		fhm.CloseFiles()
-
-		expectedFileSize := (1<<16)*(2*27+conf.BucketHeaderLength) + conf.MapFileHeaderLength
+		fhmInit.CloseFiles()
 
 		// Execute
-		fhm2, _, err := NewFromExistingFiles(testHashMap, nil)
+		fhm, info, err := NewFromExistingFiles(testHashMap, nil)
 
 		// Check
-		assert.True(t, fhm2.internalAlg, "same internal alg flag")
-		assert.NoError(t, err, "open existing files")
-		assert.Equal(t, int64(100000), fhm2.initialUniqueKeys, "same initial unique values")
-		assert.Equal(t, int64(16), fhm2.keyLength, "same key length")
-		assert.Equal(t, int64(10), fhm2.valueLength, "same value length")
-		assert.Equal(t, int64(2), fhm2.recordsPerBucket, "same records per bucket")
-		assert.Equal(t, int64(65536), fhm2.numberOfBuckets, "same number of bucket")
-		assert.Equal(t, int64(0), fhm2.minBucketNo, "same min bucket no")
-		assert.Equal(t, int64(65535), fhm2.maxBucketNo, "same max bucket no")
-		assert.Equal(t, expectedFileSize, fhm2.fileSize, "same file size")
+		assert.NoError(t, err, "opens file hash map")
+		assert.Equal(t, testHashMap, fhm.name, "correct name")
+		assert.Equal(t, infoInit.RecordsPerBucket, info.RecordsPerBucket, "records per bucket preserved")
+		assert.Equal(t, infoInit.AverageBucketFillFactor, info.AverageBucketFillFactor, "fill factor preserved")
+		assert.Equal(t, infoInit.NumberOfBuckets, info.NumberOfBuckets, "number of buckets preserved")
+		assert.Equal(t, infoInit.FileSize, info.FileSize, "filesize preserved")
 
 		// Clean up
-		err = fhm2.RemoveFiles()
-		assert.NoError(t, err, "files can be removed after close")
-		_, err = os.Stat(fhm2.ovflFileName)
-		assert.Error(t, err, "overflow file is removed")
-		_, err = os.Stat(fhm2.mapFileName)
-		assert.Error(t, err, "map file is removed")
+		err = fhm.RemoveFiles()
+		assert.NoError(t, err, "removes files")
+
+		_, err = os.Stat(fmt.Sprintf("%s-map.bin", testHashMap))
+		assert.True(t, os.IsNotExist(err), "map file removed")
+		_, err = os.Stat(fmt.Sprintf("%s-ovfl.bin", testHashMap))
+		assert.True(t, os.IsNotExist(err), "overflow file removed")
 	})
 
 	t.Run("error when reopen an non-existing file", func(t *testing.T) {
@@ -149,9 +112,9 @@ func TestNewFromExistingFiles(t *testing.T) {
 func TestReorgFiles(t *testing.T) {
 	t.Run("reorganizes file", func(t *testing.T) {
 		// Prepare
-		bakName := fmt.Sprintf("%s-original", testHashMap)
-		bakMapFileName := fmt.Sprintf("%s-map.bin", bakName)
-		bakOvflFileName := fmt.Sprintf("%s-ovfl.bin", bakName)
+		newName := fmt.Sprintf("%s-reorg", testHashMap)
+		mapFileName := fmt.Sprintf("%s-map.bin", testHashMap)
+		ovflFileName := fmt.Sprintf("%s-ovfl.bin", testHashMap)
 
 		rand.Seed(123)
 		keys := make([][]byte, 100)
@@ -167,8 +130,6 @@ func TestReorgFiles(t *testing.T) {
 
 		fhm, _, err := NewFileHashMap(testHashMap, 10, 5, 10, nil)
 		assert.NoError(t, err, "create fil hash map")
-		err = fhm.CreateNewFiles()
-		assert.NoError(t, err, "create fil hash map files")
 
 		for i := 0; i < 100; i++ {
 			err = fhm.Set(keys[i], values[i])
@@ -183,7 +144,8 @@ func TestReorgFiles(t *testing.T) {
 			PrependKeyExtension:   false,
 			ValueExtension:        10,
 			PrependValueExtension: true,
-			BucketAlgorithm:       nil,
+			NewBucketAlgorithm:    nil,
+			OldBucketAlgorithm:    nil,
 		}
 
 		// Execute
@@ -192,7 +154,7 @@ func TestReorgFiles(t *testing.T) {
 		// Check
 		assert.NoError(t, err, "run reorg files")
 
-		fhm, _, err = NewFromExistingFiles(testHashMap, nil)
+		fhm, _, err = NewFromExistingFiles(newName, nil)
 		assert.NoError(t, err, "open reorged files")
 
 		for i := 0; i < 100; i++ {
@@ -210,21 +172,14 @@ func TestReorgFiles(t *testing.T) {
 			}
 		}
 
-		if _, err = os.Stat(bakMapFileName); err != nil {
-			assert.Fail(t, "backup map file exist")
-		}
-		if _, err = os.Stat(bakOvflFileName); err != nil {
-			assert.Fail(t, "backup overflow file exist")
-		}
-
 		// Clean up
 		err = fhm.RemoveFiles()
 		assert.NoError(t, err, "backup file can be removed after close")
 
-		err = os.Remove(bakMapFileName)
+		err = os.Remove(mapFileName)
 		assert.NoError(t, err, "backup map file can be removed after close")
 
-		err = os.Remove(bakOvflFileName)
+		err = os.Remove(ovflFileName)
 		assert.NoError(t, err, "backup overflow file can be removed after close")
 	})
 }

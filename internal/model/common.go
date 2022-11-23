@@ -30,3 +30,15 @@ type Record struct {
 	Key           []byte
 	Value         []byte
 }
+
+// StorageParameters - Represents parameters specific for any implementation of storage
+type StorageParameters struct {
+	InitialUniqueKeys int64
+	KeyLength         int64
+	ValueLength       int64
+	RecordsPerBucket  int64
+	NumberOfBuckets   int64
+	FillFactor        float64
+	MapFileSize       int64
+	InternalAlgorithm bool
+}

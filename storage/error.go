@@ -1,4 +1,4 @@
-package filehashmap
+package storage
 
 // NoRecordFound - Custom error to inform that no record was found
 type NoRecordFound struct {
