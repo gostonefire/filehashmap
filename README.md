@@ -16,7 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/gostonefire/filehashmap"
-	"github.com/gostonefire/filehashmap/storage"
+	"github.com/gostonefire/filehashmap/crt"
 )
 
 func main() {
@@ -28,9 +28,9 @@ func main() {
 	dataB := []byte{19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8}
 	dataC := []byte{2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2}
 
-	fhm, info, _ := filehashmap.NewFileHashMap("test", 100, 8, 12, nil)
-	fmt.Printf("RecordsPerBucket: %d, AverageBucketFillFactor: %.4f, NumberOfBuckets: %d, FileSize: %d\n",
-		info.RecordsPerBucket, info.AverageBucketFillFactor, info.NumberOfBuckets, info.FileSize)
+	fhm, info, _ := filehashmap.NewFileHashMap("test", crt.OpenChaining, 100, 8, 12, nil)
+	fmt.Printf("NumberOfBucketsNeeded: %d, NumberOfBucketsAvailable: %d, FileSize: %d\n",
+		info.NumberOfBucketsNeeded, info.NumberOfBucketsAvailable, info.FileSize)
 	defer fhm.CloseFiles()
 
 	_ = fhm.Set(keyA, dataA)
@@ -46,7 +46,7 @@ func main() {
 	fmt.Printf("valueB: %v\n", valueB)
 
 	valueC, err := fhm.Get(keyC)
-	if errors.Is(err, storage.NoRecordFound{}) {
+	if errors.Is(err, crt.NoRecordFound{}) {
 		fmt.Println("Record not found")
 	}
 	fmt.Printf("valueC: %v\n", valueC)
@@ -58,40 +58,50 @@ func main() {
 	_ = fhm.RemoveFiles()
 }
 
-// RecordsPerBucket: 2, AverageBucketFillFactor: 0.7812, NumberOfBuckets: 64, FileSize: 4224
+// NumberOfBucketsNeeded: 100, NumberOfBucketsAvailable: 128, FileSize: 4736
 // valueA: [8 9 10 11 12 13 14 15 16 17 18 19]
 // valueB: [19 18 17 16 15 14 13 12 11 10 9 8]
 // Record not found
 // valueC: []
-// Records: 2, MapFileRecords: 2, OverflowRecords: 0, BucketDistribution length: 64
-
-
+// Records: 2, MapFileRecords: 2, OverflowRecords: 0, BucketDistribution length: 12
 ```
 
 ## Description
 FileHashMap is a filed backed map that can be used to store large amount of data with quick access through 
 a hash algorithm that gives a bucket number which in turn more or less directly points out the bucket address in
-file. Hence, the map file is a fixed sized file with most often 2 record spots per bucket. A special case is when
-the number of buckets from the bucket algorithm is equal to the initialUniqueKeys parameter given at creation time,
-which then gives an allocation of one record per bucket.
+file. Hence, the map file is a fixed sized file with one record per bucket.
 
-Of course, keys will never be perfectly distributed over available buckets so an overflow file is also created.
-Once a bucket is filled and a new record is about to be assigned, the bucket gets an entry in the overflow file.
-The overflow file is not fixed size but rather grows as needed, and the records are instead working as single
-linked lists. Hence, using linked list technique in overflow leads to more disk access so well distributed keys over
-buckets to keep most traffic in the map file is desirable.
+Of course, keys will never be perfectly distributed over available buckets so a collision resolution technique is
+needed. The FileHashMap implements several that can be chosen from, and they all work slightly different.
+  * Open Chaining
+  * Linear Probing
+  * Quadratic Probing (not yet implemented)
+  * Double Hashing (not yet implemented)
+
+Out of the four, the Open Chaining is the one that differs the most. It resolves conflict by linking conflicting record
+in a linked list. Hence, in FileHashMap it uses two files, one master file called a map file and one overflow file.
+The map file is fixed size depending on number of buckets and record lengths (key, value and some header data), whilst the
+overflow file grows as more records ends up in overflow due to bucket collisions. If it is highly unknown how many unique
+keys will be needed to store, this option is the best.
+
+The other three options uses a fixed size map table only, hence it will not allow any more unique keys than number of
+available buckets. Also, they use a probing technique which means at time of collision they seek (using different techniques)
+for an available bucket. This can be very time-consuming when number of buckets is very large and when we are having only a few 
+free buckets left. Linear and Quadratic Probing also suffers from clustering issues.
 
 ### Creating a file hash map:
-The NewFileHashMap function creates a new instance, although at this stage no physical files are created.
+The NewFileHashMap function creates a new instance and file(s) are created according choice of collision resolution technique.
+
 The calling parameters are:
   * name - The name of the file hash map that will eventually form the name (and path) of the physical files.
-  * initialUniqueKeys - The number of estimated unique keys that will be entered. The closer to what is actually going into the map reduces the usage of overflow.
+  * crtType - Choice of Collision Resolution Technique (crt.OpenChaining, crt.LinearProbing, crt.QuadraticProbing or crt.DoubleHashing)
+  * bucketsNeeded - The number of buckets to create space for in the map file.
   * keyLength - Is the fixed key length that will later be accepted
   * valueLength - Is the fixed value length that will later be accepted
-  * bucketAlgorithm - Makes it possible to supply your own algorithm (will be discussed further down), set to nil to use the internal one.
+  * hashAlgorithm - Makes it possible to supply your own algorithm (will be discussed further down), set to nil to use the internal one.
 
 ```
-fhm, info, err := filehashmap.NewFileHashMap("test", 100, 8, 12, nil)
+fhm, info, err := filehashmap.NewFileHashMap("test", crt.OpenChaining, 100, 8, 12, nil)
 if err != nil {
     // Do some logging or whatever
     ...
@@ -113,14 +123,13 @@ Returned data are:
     * CloseFiles()
     * RemoveFiles() (err error)
   * info - a pointer to a HashMapInfo struct which contains:
-    * RecordsPerBucket - Number of records allocated per bucket in the map file
-    * AverageBucketFillFactor - The calculated expected average filled records per bucket, should the keys be perfectly distributed over bucket numbers.
-    * NumberOfBuckets - Total number of buckets allocated in map file
+    * NumberOfBucketsNeeded - Total number of buckets needed as in the call to NewFileHashMap
+    * NumberOfBucketsAvailable - Total number of buckets available (this can be a different value compared to NumberOfBucketsNeeded depending on choice of hash algorithm)
     * FileSize - Size of the file created
   * err - which is a standard Go error
 
 ### Physical files created
-The NewFileHashMap function creates two physical files; the map file and the overflow file.
+The NewFileHashMap function creates one or two physical files (depending on choice of Collision Resolution Technique); a map file and potentially an overflow file.
 File names are constructed using the name that was given in the call to NewFileHashMap.
   * Map file - <name>-map.bin
   * Overflow file - <name>-ovfl.bin
@@ -128,15 +137,12 @@ File names are constructed using the name that was given in the call to NewFileH
 If name includes a path the files will end up in that path, otherwise they will end upp from within where the application
 is executed.
 
-The map file is fixed size with a header space of 1024 bytes. Each bucket has its own header 
-of 8 bytes to hold the address to within the overflow file (should overflow occur, otherwise uint64(0)).
-Each record in a bucket has a one byte header indicating whether the record is in use or not.
+The map file is fixed size with a header space of 1024 bytes. Each bucket has its own header consisting of
+a one byte header indicating whether the record is empty, deleted or occupied.
+In the case of OpenChaining each bucket also has a header of 8 bytes which is the address to any linked list within 
+the overflow file (address is uint64(0) until first overflow in a bucket is needed).
 
-The map file structure permits minimum reads/writes to get/set data since a read fetches the entire bucket which gives
-all information necessary to get records and whether to also iterate in the overflow file. Each record write is one
-file operation since the "in use" flag is a header per data record.
-
-The overflow file has a header of 1024 bytes for future use, current version does not use it. Records in the overflow
+The overflow file (if present) has a header of 1024 bytes for future use, current version does not use it. Records in the overflow
 file are single linked records, end the entry point to the starting record is held in the bucket header in the map file.
 There is no reason to have double linked records since we are talking about files here. If a record that happens to
 exist in overflow file is popped, it is very hard to reclaim space overall in the file. Furthermore, to keep track on
@@ -147,10 +153,11 @@ would be a performance hit. Instead, a freed record will be reused if a Set with
 The NewFromExistingFiles opens an existing file hash map. 
 The calling parameters are:
   * name - The name of the hash map, including whatever path the physical files is within.
-  * bucketAlgorithm - The same, and it has to be the same, algorithm that was used when it was first created.
+  * hashAlgorithm - The same, and it has to be the same, algorithm that was used when it was first created (nil if it was first created using internal hash algorithm).
 
-Returned data is the same as for NewFileHashMap, but of course the FileSize in the HashMapInfo struct is now the 
-actual size of the physical files.
+Returned data is the same as for NewFileHashMap.
+
+The map file header contains what collision resolution technique was used when it was first created.
 
 ```
 fhm, info, err := filehashmap.NewFromExistingFiles("test", nil)
@@ -190,6 +197,7 @@ are some guesswork involved when setting the first instance up. But things may c
   * Estimation of number of unique keys to store values for may have been way of
   * Key and/or Value lengths may have to be expanded
   * The nature of the key construction may gain on a customized bucket algorithm to get better distribution over buckets, hence lower the amount of records in overflow.
+  * The choice of collision resolution technique may have been wrong.
 
 The ReorgFiles function does that reorganization in one command.
 
@@ -201,27 +209,29 @@ files are left in the file system for the caller to decide what to do with them.
 Configuration:
 ```
 // ReorgConf - Is a struct used in the call to ReorgFiles holding configuration for the new file structure.
-//   - InitialUniqueKeys is the new estimated number of unique keys to store in the hash map files
+//   - CollisionResolutionTechnique is the new CRT to use
+//   - NumberOfBucketsNeeded is the new estimated number of buckets needed store in the hash map files
 //   - KeyExtension is number of bytes to extend the key with
 //   - PrependKeyExtension whether to prepend the extra space or append it
 //   - ValueExtension is number of bytes to extend the value with
 //   - PrependValueExtension whether to prepend the extra space or append it
-//   - NewBucketAlgorithm is the algorithm to use
-//   - OldBucketAlgorithm is the algorithm that was used in the original file hash map
+//   - NewHashAlgorithm is the algorithm to use
+//   - OldHashAlgorithm is the algorithm that was used in the original file hash map
 type ReorgConf struct {
-	InitialUniqueKeys     int64
-	KeyExtension          int64
-	PrependKeyExtension   bool
-	ValueExtension        int64
-	PrependValueExtension bool
-	NewBucketAlgorithm    hashfunc.HashAlgorithm
-	OldBucketAlgorithm    hashfunc.HashAlgorithm
+	CollisionResolutionTechnique int
+	NumberOfBucketsNeeded        int
+	KeyExtension                 int
+	PrependKeyExtension          bool
+	ValueExtension               int
+	PrependValueExtension        bool
+	NewHashAlgorithm             hashfunc.HashAlgorithm
+	OldHashAlgorithm             hashfunc.HashAlgorithm
 }
 ```
 
 Fill in whatever parameter needs change and leave the others with Go zero values (integers are zero, booleans are false and 
 interfaces are nil). Hence, a configuration to change only the length of the value in a record with the extended bytes 
-prepended to the existing values will look like this:
+prepended to the existing values will look like this (assuming internal hash algorithm was used in the old file(s):
 ```
 reorgConf := filehashmap.ReorgConf{
 	ValueExtension:        10,
@@ -230,7 +240,7 @@ reorgConf := filehashmap.ReorgConf{
 
 fmt.Printf("%+v\n", reorgConf)
 
-// {InitialUniqueKeys:0 KeyExtension:0 PrependKeyExtension:false ValueExtension:10 PrependValueExtension:true NewBucketAlgorithm:<nil> OldBucketAlgorithm:<nil>}
+// {CollisionResolutionTechnique:0 NumberOfBucketsNeeded:0 KeyExtension:0 PrependKeyExtension:false ValueExtension:10 PrependValueExtension:true NewHashAlgorithm:<nil> OldHashAlgorithm:<nil>}
 ```
 
 The HashAlgorithm is managed slightly different. Sending in a nil in the config struct will result in reorganization if
@@ -251,11 +261,12 @@ package main
 import (
 	"fmt"
 	"github.com/gostonefire/filehashmap"
+	"github.com/gostonefire/filehashmap/crt"
 )
 
 func main() {
 	// Create a new FileHashMap with initialUniqueKeys=100, keyLength=5 and valueLength=10
-	fhm, _, _ := filehashmap.NewFileHashMap("test", 100, 5, 10, nil)
+	fhm, _, _ := filehashmap.NewFileHashMap("test", crt.OpenChaining, 100, 5, 10, nil)
 
 	// Add a record
 	key := []byte{1, 2, 3, 4, 5}
@@ -287,8 +298,8 @@ func main() {
 	fmt.Printf("%+v\n", value)
 }
 
-// {RecordsPerBucket:2 AverageBucketFillFactor:0.78125 NumberOfBuckets:64 FileSize:3584}
-// {RecordsPerBucket:2 AverageBucketFillFactor:0.78125 NumberOfBuckets:64 FileSize:4864}
+// {NumberOfBucketsNeeded:100 NumberOfBucketsAvailable:128 FileSize:4096}
+// {NumberOfBucketsNeeded:100 NumberOfBucketsAvailable:128 FileSize:5376}
 // [0 0 0 0 0 10 9 8 7 6 5 4 3 2 1]
 
 // Files after operation:
@@ -299,7 +310,7 @@ func main() {
 ```
 
 The file size changed by 1280 bytes which comes from 5 extra key bytes and 5 extra value bytes, times total number of
-available records which is 2 times 64, i.e. (5+5)\*2\*64 = 1280.
+available buckets which is 128, i.e. (5+5)\*128 = 1280.
 
 We had to use the new key size (5 bytes appended) when getting the original but extended value (5 bytes prepended).
 
@@ -312,7 +323,7 @@ The calling parameters are:
   * value - The value of the record to be written. Must be of same length as indicated when the FileHashMap was created.
 
 Returned data is:
-  * err - Is a standard Go error indicating what might have gone wrong
+  * err - An error of type crt.MapFileFull if no available buckets were found (N/A for crt.OpenChaining) or a standard Go error if something else went wrong.
 
 ```
 keyA := []byte{0, 1, 2, 3, 4, 5, 6, 7}
@@ -334,11 +345,11 @@ The calling parameters are:
 
 Returned data is:
   * value - The value of the record identified by the key, or nil if no record was found.
-  * err - An error of type storage.NoRecordFound if no record was found, or a standard Go error if something else went wrong.
+  * err - An error of type crt.NoRecordFound if no record was found, or a standard Go error if something else went wrong.
 
 ```
 valueC, err := fhm.Get(keyC)
-if errors.Is(err, storage.NoRecordFound{}) {
+if errors.Is(err, crt.NoRecordFound{}) {
 	// Manage the not found record or whatever
 	...
 } else if err != nil {
@@ -356,11 +367,11 @@ The calling parameters are:
 
 Returned data is:
   * value - The value of the record identified by the key, or nil if no record was found.
-  * err - An error of type storage.NoRecordFound if no record was found, or a standard Go error if something else went wrong.
+  * err - An error of type crt.NoRecordFound if no record was found, or a standard Go error if something else went wrong.
 
 ```
 valueC, err := fhm.Pop(keyC)
-if errors.Is(err, storage.NoRecordFound{}) {
+if errors.Is(err, crt.NoRecordFound{}) {
 	// Manage the not found record or whatever
 	...
 } else if err != nil {
@@ -412,54 +423,79 @@ awkward and could gain from having a better fitting algorithm to avoid too much 
 ```
 // HashAlgorithm - Interface that permits an implementation using the FileHashMap to supply a custom bucket
 // selection algorithm suited for its particular distribution of keys.
-// The internally used algorithm is implemented using crc32.ChecksumIEEE to create a hash value over the key and
-// then applying bucket = hash & (1<<exp - 1) to get the bucket number, where 1<<exp (2 to the power of exp)
-// is the total number of buckets to distribute over.
 type HashAlgorithm interface {
-	// BucketNumber - Given key it generates a bucket number between minValue and maxValue (inclusive)
+	// HashFunc1 - Given key it generates a bucket number between minValue and maxValue (inclusive)
 	// Any number returned outside the minValue/maxValue (inclusive) range will result in an error down stream.
-	BucketNumber(key []byte) int64
-	// BucketNumberRange - Returns the min and max (inclusive) that BucketNumber will ever return.
-	BucketNumberRange() (minValue, maxValue int64)
+	HashFunc1(key []byte) int64
+	// HashFunc2 - Given key it generates a bucket number between minValue and maxValue (inclusive)
+	// Any number returned outside the minValue/maxValue (inclusive) range will result in an error down stream.
+	HashFunc2(key []byte) int64
+	// RangeHashFunc1 - Returns the min and max (inclusive) that HashFunc1 will ever return.
+	RangeHashFunc1() (minValue, maxValue int64)
+	// RangeHashFunc2 - Returns the min and max (inclusive) that HashFunc2 will ever return.
+	RangeHashFunc2() (minValue, maxValue int64)
+	// CombinedHash - Returns a combined hash value given values from hash functions 1 and 2 with iteration.
+	CombinedHash(hashValue1, hashValue2, iteration int64) int64
 }
 ```
 
-Internally every bucket number is transformed to zero based before applying to the map, i.e. number from BucketNumber -
-minValue from BucketNumberRange. 
+Internally every bucket number is transformed to zero based before applying to the map, i.e. number from HashFunc1 -
+minValue from RangeHashFunc1. 
 
 The internal implementation should result in good enough keys for most situation though:
+NOTE! It will likely change once Double Hashing is implemented.
 
 ```
-package hash
-
 import (
 	"hash/crc32"
 	"math"
 )
 
-// BucketAlgorithm - The internally used bucket selection algorithm is implemented using crc32.ChecksumIEEE to
+// SingleHashAlgorithm - The internally used bucket selection algorithm is implemented using crc32.ChecksumIEEE to
 // create a hash value over the key and then applying bucket = hash & (1<<exp - 1) to get the bucket number,
 // where 1<<exp (2 to the power of exp) is the total number of buckets to distribute over.
-type BucketAlgorithm struct {
-	exp int64
+type SingleHashAlgorithm struct {
+	tableSize int64
+	exp       int64
 }
 
-// NewBucketAlgorithm - Returns a pointer to a new BucketAlgorithm instance
-func NewBucketAlgorithm(initialUniqueValues int64) *BucketAlgorithm {
-	exp := int64(math.Floor(math.Log2(float64(initialUniqueValues)) / math.Log2(2)))
-	return &BucketAlgorithm{exp: exp}
+// NewSingleHashAlgorithm - Returns a pointer to a new SingleHashAlgorithm instance
+func NewSingleHashAlgorithm(tableSize int64) *SingleHashAlgorithm {
+	exp := int64(math.Ceil(math.Log2(float64(tableSize)) / math.Log2(2)))
+	return &SingleHashAlgorithm{tableSize: tableSize, exp: exp}
 }
 
-// BucketNumber - Given key it generates a bucket number between minValue and maxValue (inclusive)
-func (B *BucketAlgorithm) BucketNumber(key []byte) int64 {
+// HashFunc1 - Given key it generates a bucket number between minValue and maxValue (inclusive)
+func (B *SingleHashAlgorithm) HashFunc1(key []byte) int64 {
 	h := int64(crc32.ChecksumIEEE(key))
 	return h & (1<<B.exp - 1)
 }
 
-// BucketNumberRange - Returns the min and max (inclusive) that BucketNumber will ever return.
-func (B *BucketAlgorithm) BucketNumberRange() (minValue, maxValue int64) {
+// HashFunc2 - Given key it generates a bucket number between minValue and maxValue (inclusive)
+// This function is only used in Double Hash algorithms, but implemented here to follow the interface.
+func (B *SingleHashAlgorithm) HashFunc2(key []byte) int64 {
+	h := int64(crc32.ChecksumIEEE(key))
+	return h % B.tableSize
+}
+
+// RangeHashFunc1 - Returns the min and max (inclusive) that HashFunc1 will ever return.
+func (B *SingleHashAlgorithm) RangeHashFunc1() (minValue, maxValue int64) {
 	minValue = 0
 	maxValue = 1<<B.exp - 1
 	return
+}
+
+// RangeHashFunc2 - Returns the min and max (inclusive) that HashFunc2 will ever return.
+// This function is only used in Double Hash algorithms, but implemented here to follow the interface.
+func (B *SingleHashAlgorithm) RangeHashFunc2() (minValue, maxValue int64) {
+	minValue = 0
+	maxValue = B.tableSize - 1
+	return
+}
+
+// CombinedHash - Returns a combined hash value given values from hash functions 1 and 2 with iteration.
+// This function is only used in Double Hash algorithms, but implemented here to follow the interface.
+func (B *SingleHashAlgorithm) CombinedHash(hashValue1, hashValue2, iteration int64) int64 {
+	return (hashValue1 + iteration*hashValue2) % B.tableSize
 }
 ```

@@ -1,102 +1,82 @@
 package scres
 
 import (
-	"errors"
 	"fmt"
+	"github.com/gostonefire/filehashmap/crt"
 	hashfunc "github.com/gostonefire/filehashmap/interfaces"
 	"github.com/gostonefire/filehashmap/internal/hash"
 	"github.com/gostonefire/filehashmap/internal/model"
+	"github.com/gostonefire/filehashmap/internal/overflow"
+	"github.com/gostonefire/filehashmap/internal/storage"
 	"github.com/gostonefire/filehashmap/internal/utils"
-	"github.com/gostonefire/filehashmap/storage"
-	"math"
 	"os"
 )
-
-// SCFilesConf - Is a struct to be passed in the call to NewSCFiles and contains configuration that affects
-// file processing.
-//   - Name is the name to base map and overflow file names on
-//   - KeyLength is the fixed length of keys to store
-//   - ValueLength is the fixed length of values to store
-//   - HashAlgorithm is the hash function(s) to use
-type SCFilesConf struct {
-	Name              string
-	InitialUniqueKeys int64
-	KeyLength         int64
-	ValueLength       int64
-	HashAlgorithm     hashfunc.HashAlgorithm
-}
 
 // SCFiles - Represents an implementation of file support for the Separate Chaining Collision Resolution Technique.
 // It uses two files in this particular implementation where one stores directly addressable buckets and the
 // other manages overflow in single linked lists.
 type SCFiles struct {
-	mapFileName       string
-	ovflFileName      string
-	mapFile           *os.File
-	ovflFile          *os.File
-	initialUniqueKeys int64
-	keyLength         int64
-	valueLength       int64
-	recordsPerBucket  int64
-	numberOfBuckets   int64
-	fillFactor        float64
-	minBucketNo       int64
-	maxBucketNo       int64
-	mapFileSize       int64
-	hashAlgorithm     hashfunc.HashAlgorithm
-	internalAlgorithm bool
+	mapFileName              string
+	ovflFileName             string
+	mapFile                  *os.File
+	ovflFile                 *os.File
+	keyLength                int64
+	valueLength              int64
+	numberOfBucketsNeeded    int64
+	numberOfBucketsAvailable int64
+	minBucketNo              int64
+	maxBucketNo              int64
+	mapFileSize              int64
+	hashAlgorithm            hashfunc.HashAlgorithm
+	internalAlgorithm        bool
 }
 
 // NewSCFiles - Returns a pointer to a new instance of Separate Chaining file implementation.
 // It always creates new files (or opens and truncate existing files)
-//   - scFilesConf is a SCFilesConf struct providing configuration parameter affecting files creation and processing
+//   - crtConf is a model.CRTConf struct providing configuration parameter affecting files creation and processing
 //
 // It returns:
 //   - scFiles which is a pointer to the created instance
 //   - err which is a standard Go type of error
-func NewSCFiles(scFilesConf SCFilesConf) (scFiles *SCFiles, err error) {
+func NewSCFiles(crtConf model.CRTConf) (scFiles *SCFiles, err error) {
 	// If no HashAlgorithm was given then use the default internal
 	var internalAlg bool
-	if scFilesConf.HashAlgorithm == nil {
-		scFilesConf.HashAlgorithm = hash.NewBucketAlgorithm(scFilesConf.InitialUniqueKeys)
+	if crtConf.HashAlgorithm == nil {
+		crtConf.HashAlgorithm = hash.NewSingleHashAlgorithm(crtConf.NumberOfBucketsNeeded)
 		internalAlg = true
 	}
 
 	// Calculate the hash map file various parameters
-	trueRecordLength := scFilesConf.KeyLength + scFilesConf.ValueLength + inUseFlagBytes
-	minBucketNo, maxBucketNo := scFilesConf.HashAlgorithm.BucketNumberRange()
-	numberOfBuckets := maxBucketNo - minBucketNo + 1
-	recordsPerBucket := int64(math.Ceil(float64(scFilesConf.InitialUniqueKeys) / float64(numberOfBuckets)))
-	bucketLength := trueRecordLength*recordsPerBucket + bucketHeaderLength
-	fileSize := bucketLength*numberOfBuckets + mapFileHeaderLength
-	fillFactor := float64(scFilesConf.InitialUniqueKeys) / float64(recordsPerBucket*numberOfBuckets)
+	trueRecordLength := crtConf.KeyLength + crtConf.ValueLength + stateBytes
+	minBucketNo, maxBucketNo := crtConf.HashAlgorithm.RangeHashFunc1()
+	numberOfBucketsAvailable := maxBucketNo - minBucketNo + 1
+	bucketLength := trueRecordLength + bucketHeaderLength
+	fileSize := bucketLength*numberOfBucketsAvailable + storage.MapFileHeaderLength
 
 	scFiles = &SCFiles{
-		mapFileName:       fmt.Sprintf("%s-map.bin", scFilesConf.Name),
-		ovflFileName:      fmt.Sprintf("%s-ovfl.bin", scFilesConf.Name),
-		initialUniqueKeys: scFilesConf.InitialUniqueKeys,
-		keyLength:         scFilesConf.KeyLength,
-		valueLength:       scFilesConf.ValueLength,
-		recordsPerBucket:  recordsPerBucket,
-		numberOfBuckets:   numberOfBuckets,
-		fillFactor:        fillFactor,
-		minBucketNo:       minBucketNo,
-		maxBucketNo:       maxBucketNo,
-		mapFileSize:       fileSize,
-		hashAlgorithm:     scFilesConf.HashAlgorithm,
-		internalAlgorithm: internalAlg,
+		mapFileName:              storage.GetMapFileName(crtConf.Name),
+		ovflFileName:             storage.GetOvflFileName(crtConf.Name),
+		keyLength:                crtConf.KeyLength,
+		valueLength:              crtConf.ValueLength,
+		numberOfBucketsNeeded:    crtConf.NumberOfBucketsNeeded,
+		numberOfBucketsAvailable: numberOfBucketsAvailable,
+		minBucketNo:              minBucketNo,
+		maxBucketNo:              maxBucketNo,
+		mapFileSize:              fileSize,
+		hashAlgorithm:            crtConf.HashAlgorithm,
+		internalAlgorithm:        internalAlg,
 	}
 
-	header := model.Header{
-		InternalAlg:       internalAlg,
-		InitialUniqueKeys: scFilesConf.InitialUniqueKeys,
-		KeyLength:         scFilesConf.KeyLength,
-		ValueLength:       scFilesConf.ValueLength,
-		RecordsPerBucket:  recordsPerBucket,
-		NumberOfBuckets:   numberOfBuckets,
-		MinBucketNo:       minBucketNo,
-		MaxBucketNo:       maxBucketNo,
-		FileSize:          fileSize,
+	header := storage.Header{
+		InternalHash:                 internalAlg,
+		KeyLength:                    crtConf.KeyLength,
+		ValueLength:                  crtConf.ValueLength,
+		NumberOfBucketsNeeded:        crtConf.NumberOfBucketsNeeded,
+		NumberOfBucketsAvailable:     numberOfBucketsAvailable,
+		MinBucketNo:                  minBucketNo,
+		MaxBucketNo:                  maxBucketNo,
+		FileSize:                     fileSize,
+		CollisionResolutionTechnique: int64(crt.OpenChaining),
 	}
 
 	err = scFiles.createNewHashMapFile(header)
@@ -120,8 +100,8 @@ func NewSCFiles(scFilesConf SCFilesConf) (scFiles *SCFiles, err error) {
 //   - scFiles which is a pointer to the created instance
 //   - err which is a standard Go type of error
 func NewSCFilesFromExistingFiles(name string, hashAlgorithm hashfunc.HashAlgorithm) (scFiles *SCFiles, err error) {
-	mapFileName := fmt.Sprintf("%s-map.bin", name)
-	ovflFileName := fmt.Sprintf("%s-ovfl.bin", name)
+	mapFileName := storage.GetMapFileName(name)
+	ovflFileName := storage.GetOvflFileName(name)
 
 	scFiles = &SCFiles{mapFileName: mapFileName, ovflFileName: ovflFileName}
 
@@ -135,12 +115,12 @@ func NewSCFilesFromExistingFiles(name string, hashAlgorithm hashfunc.HashAlgorit
 	}
 
 	// Check for mismatch in choice of hash algorithm
-	if header.InternalAlg && hashAlgorithm != nil {
+	if header.InternalHash && hashAlgorithm != nil {
 		scFiles.CloseFiles()
 		err = fmt.Errorf("seems the hash map file was used with the internal hash algorithm but an external was given")
 		return
 	}
-	if !header.InternalAlg && hashAlgorithm == nil {
+	if !header.InternalHash && hashAlgorithm == nil {
 		scFiles.CloseFiles()
 		err = fmt.Errorf("seems the hash map file was used with the external hash algorithm but no external was given")
 		return
@@ -149,16 +129,15 @@ func NewSCFilesFromExistingFiles(name string, hashAlgorithm hashfunc.HashAlgorit
 	// If no HashAlgorithm was given then use the default internal
 	var internalAlg bool
 	if hashAlgorithm == nil {
-		hashAlgorithm = hash.NewBucketAlgorithm(header.InitialUniqueKeys)
+		hashAlgorithm = hash.NewSingleHashAlgorithm(header.NumberOfBucketsNeeded)
 		internalAlg = true
 	}
 
-	scFiles.initialUniqueKeys = header.InitialUniqueKeys
+	//scFiles.initialUniqueKeys = header.NumberOfBucketsNeeded
 	scFiles.keyLength = header.KeyLength
 	scFiles.valueLength = header.ValueLength
-	scFiles.recordsPerBucket = header.RecordsPerBucket
-	scFiles.numberOfBuckets = header.NumberOfBuckets
-	scFiles.fillFactor = float64(scFiles.initialUniqueKeys) / float64(scFiles.recordsPerBucket*scFiles.numberOfBuckets)
+	scFiles.numberOfBucketsNeeded = header.NumberOfBucketsNeeded
+	scFiles.numberOfBucketsAvailable = header.NumberOfBucketsAvailable
 	scFiles.minBucketNo = header.MinBucketNo
 	scFiles.maxBucketNo = header.MaxBucketNo
 	scFiles.mapFileSize = header.FileSize
@@ -209,14 +188,13 @@ func (S *SCFiles) RemoveFiles() (err error) {
 // GetStorageParameters - Returns a struct with storage parameters from SCFiles
 func (S *SCFiles) GetStorageParameters() (params model.StorageParameters) {
 	params = model.StorageParameters{
-		InitialUniqueKeys: S.initialUniqueKeys,
-		KeyLength:         S.keyLength,
-		ValueLength:       S.valueLength,
-		RecordsPerBucket:  S.recordsPerBucket,
-		NumberOfBuckets:   S.numberOfBuckets,
-		FillFactor:        S.fillFactor,
-		MapFileSize:       S.mapFileSize,
-		InternalAlgorithm: S.internalAlgorithm,
+		CollisionResolutionTechnique: crt.OpenChaining,
+		KeyLength:                    S.keyLength,
+		ValueLength:                  S.valueLength,
+		NumberOfBucketsNeeded:        S.numberOfBucketsNeeded,
+		NumberOfBucketsAvailable:     S.numberOfBucketsAvailable,
+		MapFileSize:                  S.mapFileSize,
+		InternalAlgorithm:            S.internalAlgorithm,
 	}
 
 	return
@@ -227,17 +205,18 @@ func (S *SCFiles) GetStorageParameters() (params model.StorageParameters) {
 //
 // It returns:
 //   - bucket is a model.Bucket struct containing all records in the map file
-//   - overflowIterator is a OverflowRecords struct that can be used to get any overflow records belonging to the bucket.
+//   - overflowIterator is a Record struct that can be used to get any overflow records belonging to the bucket.
 //   - err is standard error
-func (S *SCFiles) GetBucket(bucketNo int64) (bucket model.Bucket, overflowIterator *OverflowRecords, err error) {
+func (S *SCFiles) GetBucket(bucketNo int64) (bucket model.Bucket, overflowIterator *overflow.Records, err error) {
 	// Get current contents from within the bucket
-	bucket, err = S.getBucketRecords(bucketNo)
+	bucket, err = S.getBucketRecord(bucketNo)
 	if err != nil {
 		err = fmt.Errorf("error while getting existing bucket records from hash map file: %s", err)
 		return
 	}
 
-	overflowIterator = newOverflowRecords(S, bucket.OverflowAddress)
+	getOvflFunc := func(recordAddress int64) (model.Record, error) { return S.getOverflowRecord(recordAddress) }
+	overflowIterator = overflow.NewRecords(getOvflFunc, bucket.OverflowAddress)
 
 	return
 }
@@ -248,8 +227,8 @@ func (S *SCFiles) GetBucket(bucketNo int64) (bucket model.Bucket, overflowIterat
 //   - keyRecord is the identifier of a record, it has to have the Key set and with the same length as given in call to NewFileHashMap
 //
 // It returns:
-//   - record is the value of the matching record if found, if not found an error of type storage.NoRecordFound is also returned.
-//   - err is either of type storage.NoRecordFound or a standard error, if something went wrong
+//   - record is the value of the matching record if found, if not found an error of type crt.NoRecordFound is also returned.
+//   - err is either of type crt.NoRecordFound or a standard error, if something went wrong
 func (S *SCFiles) Get(keyRecord model.Record) (record model.Record, err error) {
 	// Check validity of the key
 	if int64(len(keyRecord.Key)) != S.keyLength {
@@ -268,10 +247,9 @@ func (S *SCFiles) Get(keyRecord model.Record) (record model.Record, err error) {
 	}
 
 	// Sort out record with correct key
-	for _, record = range bucket.Records {
-		if record.InUse && utils.IsEqual(keyRecord.Key, record.Key) {
-			return
-		}
+	if bucket.Record.State == model.RecordOccupied && utils.IsEqual(keyRecord.Key, bucket.Record.Key) {
+		record = bucket.Record
+		return
 	}
 
 	// Check if record may be in overflow file
@@ -280,13 +258,13 @@ func (S *SCFiles) Get(keyRecord model.Record) (record model.Record, err error) {
 		if err != nil {
 			return
 		}
-		if record.InUse && utils.IsEqual(keyRecord.Key, record.Key) {
+		if record.State == model.RecordOccupied && utils.IsEqual(keyRecord.Key, record.Key) {
 			return
 		}
 	}
 
 	record = model.Record{}
-	err = storage.NoRecordFound{}
+	err = crt.NoRecordFound{}
 
 	return
 }
@@ -318,35 +296,82 @@ func (S *SCFiles) Set(record model.Record) (err error) {
 		return
 	}
 
-	// Try to find an existing record with matching ID, or add to overflow
-	var r model.Record
-	r, err = S.getBucketRecordToUpdate(bucket, record.Key)
-	if err == nil {
-		r.InUse = true
-		r.Key = record.Key
-		r.Value = record.Value
-		err = S.setBucketRecord(r)
-	} else if errors.Is(err, storage.NoRecordFound{}) {
-		if ovflIter.HasNext() {
-			r, err = S.getOverflowRecordToUpdate(ovflIter, record.Key)
-			if err == nil {
-				r.InUse = true
-				r.Key = record.Key
-				r.Value = record.Value
-				err = S.setOverflowRecord(r)
-			} else if errors.Is(err, storage.NoRecordFound{}) {
-				err = S.appendOverflowRecord(r, record.Key, record.Value)
+	// First check if there is a record to update in the map file bucket, if there is or if the bucket record is
+	// empty (never used) then we now that we can set the record and avoid searching in overflow file.
+	// If we have a deleted record then save that for potential later use, but we have to search in overflow file as well.
+	var hasDeleted bool
+	var deletedRecord, ovflRecord model.Record
+	if (bucket.Record.State == model.RecordOccupied && utils.IsEqual(record.Key, bucket.Record.Key)) || bucket.Record.State == model.RecordEmpty {
+		bucket.Record.State = model.RecordOccupied
+		bucket.Record.Key = record.Key
+		bucket.Record.Value = record.Value
+		err = S.setBucketRecord(bucket.Record)
+		if err != nil {
+			err = fmt.Errorf("error while updating or adding record to bucket or overflow: %s", err)
+		}
+		return
+	} else if bucket.Record.State == model.RecordDeleted {
+		hasDeleted = true
+		deletedRecord = bucket.Record
+	}
+
+	// Search through all overflow records until we find a matching record, in the process save first deleted record for
+	// potential later use (unless we already have a deleted record from the bucket file).
+	// If we have no match in overflow records we have to continue our search for best option.
+	for ovflIter.HasNext() {
+		ovflRecord, err = ovflIter.Next()
+		if err != nil {
+			err = fmt.Errorf("error while updating or adding record to bucket or overflow: %s", err)
+			return
+		}
+		if ovflRecord.State == model.RecordOccupied && utils.IsEqual(ovflRecord.Key, record.Key) {
+			ovflRecord.Key = record.Key
+			ovflRecord.Value = record.Value
+			err = S.setOverflowRecord(ovflRecord)
+			if err != nil {
+				err = fmt.Errorf("error while updating or adding record to bucket or overflow: %s", err)
 			}
+			return
+		} else if !hasDeleted && ovflRecord.State == model.RecordDeleted {
+			hasDeleted = true
+			deletedRecord = ovflRecord
+		}
+	}
+
+	// Having come to this part we didn't find any matching record, so set our new record in an available (deleted) spot
+	// if such was found earlier.
+	if hasDeleted {
+		deletedRecord.State = model.RecordOccupied
+		deletedRecord.Key = record.Key
+		deletedRecord.Value = record.Value
+		if deletedRecord.IsOverflow {
+			err = S.setOverflowRecord(deletedRecord)
 		} else {
-			var overflowAddress int64
-			overflowAddress, err = S.newBucketOverflow(record.Key, record.Value)
-			if err != nil {
-				return
-			}
-			err = S.setBucketOverflowAddress(bucket.BucketAddress, overflowAddress)
-			if err != nil {
-				return
-			}
+			err = S.setBucketRecord(deletedRecord)
+		}
+		if err != nil {
+			err = fmt.Errorf("error while updating or adding record to bucket or overflow: %s", err)
+		}
+		return
+	}
+
+	// There was no available (deleted) record to use, so now we will either append (link) a new record in overflow file.
+	// Or if the bucket has no overflow since earlier, create a new overflow for it and update the bucket accordingly.
+	if ovflRecord.IsOverflow {
+		err = S.appendOverflowRecord(ovflRecord, record.Key, record.Value)
+		if err != nil {
+			err = fmt.Errorf("error while updating or adding record to bucket or overflow: %s", err)
+		}
+		return
+	} else {
+		var overflowAddress int64
+		overflowAddress, err = S.newBucketOverflow(record.Key, record.Value)
+		if err != nil {
+			return
+		}
+		err = S.setBucketOverflowAddress(bucket.BucketAddress, overflowAddress)
+		if err != nil {
+			return
 		}
 	}
 
@@ -363,7 +388,7 @@ func (S *SCFiles) Set(record model.Record) (err error) {
 // It returns:
 //   - err is a standard error, if something went wrong
 func (S *SCFiles) Delete(record model.Record) (err error) {
-	record.InUse = false
+	record.State = model.RecordDeleted
 	record.Key = make([]byte, S.keyLength)
 	record.Value = make([]byte, S.valueLength)
 

@@ -9,11 +9,11 @@ import (
 
 func TestBucketNumberRange(t *testing.T) {
 	t.Run("creates a valid bucket number", func(t *testing.T) {
-		h := NewBucketAlgorithm(10)
-		bucketMin, bucketMax := h.BucketNumberRange()
+		h := NewSingleHashAlgorithm(10)
+		bucketMin, bucketMax := h.RangeHashFunc1()
 
 		assert.Equal(t, int64(0), bucketMin, "correct min value")
-		assert.Equal(t, int64(7), bucketMax, "correct max value")
+		assert.Equal(t, int64(15), bucketMax, "correct max value")
 
 	})
 }
@@ -22,8 +22,8 @@ func TestBucketNumber(t *testing.T) {
 	t.Run("creates a valid bucket number", func(t *testing.T) {
 		a := []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
 
-		h := NewBucketAlgorithm(10)
-		bucketNo := h.BucketNumber(a)
+		h := NewSingleHashAlgorithm(10)
+		bucketNo := h.HashFunc1(a)
 
 		assert.Equal(t, int64(6), bucketNo, "create a valid bucket number")
 

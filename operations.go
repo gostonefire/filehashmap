@@ -2,15 +2,15 @@ package filehashmap
 
 import (
 	"github.com/gostonefire/filehashmap/internal/model"
-	"github.com/gostonefire/filehashmap/internal/storage/scres"
+	"github.com/gostonefire/filehashmap/internal/overflow"
 )
 
 // Get - Gets record that corresponds to the given recordId.
 //   - key is the identifier of a record, it has to be of same length as given in call to NewFileHashMap
 //
 // It returns:
-//   - value is the value of the matching record if found, if not found an error of type storage.NoRecordFound is also returned.
-//   - err is either of type storage.NoRecordFound or a standard error, if something went wrong
+//   - value is the value of the matching record if found, if not found an error of type crt.NoRecordFound is also returned.
+//   - err is either of type crt.NoRecordFound or a standard error, if something went wrong
 func (F *FileHashMap) Get(key []byte) (value []byte, err error) {
 	record, err := F.fileManagement.Get(model.Record{Key: key})
 	if err != nil {
@@ -38,8 +38,8 @@ func (F *FileHashMap) Set(key []byte, value []byte) (err error) {
 //   - key is the identifier of a record, it has to be of same length as given in call to NewFileHashMap
 //
 // It returns:
-//   - value is the value of the matching record if found, if not found an error of type storage.NoRecordFound is also returned.
-//   - err is either of type storage.NoRecordFound or a standard error, if something went wrong
+//   - value is the value of the matching record if found, if not found an error of type crt.NoRecordFound is also returned.
+//   - err is either of type crt.NoRecordFound or a standard error, if something went wrong
 func (F *FileHashMap) Pop(key []byte) (value []byte, err error) {
 	record, err := F.fileManagement.Get(model.Record{Key: key})
 	if err != nil {
@@ -65,40 +65,38 @@ func (F *FileHashMap) Pop(key []byte) (value []byte, err error) {
 func (F *FileHashMap) Stat(includeDistribution bool) (hashMapStat *HashMapStat, err error) {
 	var bucket model.Bucket
 	var record model.Record
-	var iter *scres.OverflowRecords
+	var iter *overflow.Records
 	var hms HashMapStat
 
 	sp := F.fileManagement.GetStorageParameters()
 
 	if includeDistribution {
-		hms.BucketDistribution = make([]int64, sp.NumberOfBuckets)
+		hms.BucketDistribution = make([]int, sp.NumberOfBucketsAvailable)
 	}
 
 	// Iterate over every available bucket
-	for i := int64(0); i < sp.NumberOfBuckets; i++ {
+	for i := int64(0); i < sp.NumberOfBucketsAvailable; i++ {
 		bucket, iter, err = F.fileManagement.GetBucket(i)
 		if err != nil {
 			return
 		}
 
 		// Process map file records
-		for _, record = range bucket.Records {
-			if record.InUse {
-				hms.Records++
-				hms.MapFileRecords++
-				if includeDistribution {
-					hms.BucketDistribution[i]++
-				}
+		if bucket.Record.State == model.RecordOccupied {
+			hms.Records++
+			hms.MapFileRecords++
+			if includeDistribution {
+				hms.BucketDistribution[i]++
 			}
 		}
 
 		// Process overflow file records
-		for iter.HasNext() {
+		for iter != nil && iter.HasNext() {
 			record, err = iter.Next()
 			if err != nil {
 				return
 			}
-			if record.InUse {
+			if record.State == model.RecordOccupied {
 				hms.Records++
 				hms.OverflowRecords++
 				if includeDistribution {

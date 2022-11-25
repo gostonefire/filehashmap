@@ -2,8 +2,12 @@ package filehashmap
 
 import (
 	"fmt"
+	"github.com/gostonefire/filehashmap/crt"
 	"github.com/gostonefire/filehashmap/interfaces"
 	"github.com/gostonefire/filehashmap/internal/model"
+	"github.com/gostonefire/filehashmap/internal/overflow"
+	"github.com/gostonefire/filehashmap/internal/storage"
+	"github.com/gostonefire/filehashmap/internal/storage/lpres"
 	"github.com/gostonefire/filehashmap/internal/storage/scres"
 	"github.com/gostonefire/filehashmap/internal/utils"
 )
@@ -15,20 +19,18 @@ type FileManagement interface {
 	Get(keyRecord model.Record) (record model.Record, err error)
 	Set(record model.Record) (err error)
 	Delete(record model.Record) (err error)
-	GetBucket(bucketNo int64) (bucket model.Bucket, overflowIterator *scres.OverflowRecords, err error)
+	GetBucket(bucketNo int64) (bucket model.Bucket, overflowIterator *overflow.Records, err error)
 	GetStorageParameters() (params model.StorageParameters)
 }
 
 // HashMapInfo - Information structure containing some information about the hash map created
-//   - RecordsPerBucket is the number of record entries available in each bucket
-//   - AverageBucketFillFactor is the average fill factor given initial unique values and total number of available records in all buckets
-//   - NumberOfBuckets is the total number of available buckets in the file hash map
+//   - NumberOfBucketsNeeded is the need provided when calling the NewFileHashMap function
+//   - NumberOfBucketsAvailable is the total number of available buckets in the file hash map
 //   - FileSize is the total size of the map file created.
 type HashMapInfo struct {
-	RecordsPerBucket        int64
-	AverageBucketFillFactor float64
-	NumberOfBuckets         int64
-	FileSize                int64
+	NumberOfBucketsNeeded    int
+	NumberOfBucketsAvailable int
+	FileSize                 int
 }
 
 // HashMapStat - Statistics on the overall usage and distribution over buckets
@@ -37,10 +39,10 @@ type HashMapInfo struct {
 //   - OverflowRecords is the number of records that has ended up in the overflow file
 //   - BucketDistribution is the number of records stored in each available bucket
 type HashMapStat struct {
-	Records            int64
-	MapFileRecords     int64
-	OverflowRecords    int64
-	BucketDistribution []int64
+	Records            int
+	MapFileRecords     int
+	OverflowRecords    int
+	BucketDistribution []int
 }
 
 // FileHashMap - The main implementation struct
@@ -55,12 +57,12 @@ type FileHashMap struct {
 	RemoveFiles func() error
 }
 
-// NewFileHashMap - Returns a new file (or set of files) prepared to cover a theoretical initial number of unique values.
+// NewFileHashMap - Returns a new file (or set of files) prepared to cover a number of unique values in buckets.
 // If the number is too low or the spread of the values are not uniform it may be that buckets will be overfilled.
 // An overfilled bucket will result in data put in an overflow file which will still work but requires more
 // disk operations.
 //   - name is the name of the file hash map and will be used to form file name(s)
-//   - initialUniqueKeys is the theoretical max number of unique keys to be expected, in theory the limit will provide for no overfilled buckets, in practice it will most likely occur.
+//   - bucketsNeeded is the max number of buckets needed, but depending on hash algorithm it may result in a different number of actual available buckets.
 //   - keyLength is the length of the key part in a record
 //   - valueLength is the length of the value part in a record
 //   - hashAlgorithm is an optional entry to provide a custom hash algorithm following the HashAlgorithm interfaces.
@@ -71,9 +73,10 @@ type FileHashMap struct {
 //   - err is a normal go Error which should be nil if everything went ok
 func NewFileHashMap(
 	name string,
-	initialUniqueKeys int64,
-	keyLength int64,
-	valueLength int64,
+	crtType int,
+	bucketsNeeded int,
+	keyLength int,
+	valueLength int,
 	hashAlgorithm hashfunc.HashAlgorithm,
 ) (
 	fileHashMap *FileHashMap,
@@ -81,9 +84,15 @@ func NewFileHashMap(
 	err error,
 ) {
 
-	// Check if initialUniqueKeys is valid
-	if initialUniqueKeys <= 0 {
-		err = fmt.Errorf("initialUniqueKeys must be a positive value higher than 0 (zero)")
+	// Check choice of Collision Resolution Technique
+	if crtType < 1 || crtType > 4 {
+		err = fmt.Errorf("crtType has to be one of OpenChaining, LinearProbing, QuadraticProbing or DoubleHashing")
+		return
+	}
+
+	// Check if bucketsNeeded is valid
+	if bucketsNeeded <= 0 {
+		err = fmt.Errorf("bucketsNeeded must be a positive value higher than 0 (zero)")
 		return
 
 	}
@@ -107,18 +116,31 @@ func NewFileHashMap(
 		return
 	}
 
-	fpConf := scres.SCFilesConf{
-		Name:              name,
-		InitialUniqueKeys: initialUniqueKeys,
-		KeyLength:         keyLength,
-		ValueLength:       valueLength,
-		HashAlgorithm:     hashAlgorithm,
+	crtConf := model.CRTConf{
+		Name:                  name,
+		NumberOfBucketsNeeded: int64(bucketsNeeded),
+		KeyLength:             int64(keyLength),
+		ValueLength:           int64(valueLength),
+		HashAlgorithm:         hashAlgorithm,
 	}
 
 	var fm FileManagement
-	fm, err = scres.NewSCFiles(fpConf)
+	switch crtType {
+	case crt.OpenChaining:
+		fm, err = scres.NewSCFiles(crtConf)
+	case crt.LinearProbing:
+		fm, err = lpres.NewLPFiles(crtConf)
+	case crt.QuadraticProbing:
+		err = fmt.Errorf("QuadraticProbing not yet implemented")
+	case crt.DoubleHashing:
+		err = fmt.Errorf("DoubleHashing not yet implemented")
+	default:
+		err = fmt.Errorf("crtType %d unknown", crtType)
+	}
 	if err != nil {
-		_ = fm.RemoveFiles()
+		if fm != nil {
+			_ = fm.RemoveFiles()
+		}
 		return
 	}
 
@@ -136,10 +158,9 @@ func NewFileHashMap(
 	sp := fm.GetStorageParameters()
 
 	hashMapInfo = HashMapInfo{
-		RecordsPerBucket:        sp.RecordsPerBucket,
-		AverageBucketFillFactor: sp.FillFactor,
-		NumberOfBuckets:         sp.NumberOfBuckets,
-		FileSize:                sp.MapFileSize,
+		NumberOfBucketsNeeded:    int(sp.NumberOfBucketsNeeded),
+		NumberOfBucketsAvailable: int(sp.NumberOfBucketsAvailable),
+		FileSize:                 int(sp.MapFileSize),
 	}
 
 	return
@@ -159,8 +180,24 @@ func NewFromExistingFiles(name string, hashAlgorithm hashfunc.HashAlgorithm) (
 	hashMapInfo HashMapInfo,
 	err error,
 ) {
+	header, err := storage.GetFileHeader(storage.GetMapFileName(name))
+	if err != nil {
+		return
+	}
+
 	var fm FileManagement
-	fm, err = scres.NewSCFilesFromExistingFiles(name, hashAlgorithm)
+	switch int(header.CollisionResolutionTechnique) {
+	case crt.OpenChaining:
+		fm, err = scres.NewSCFilesFromExistingFiles(name, hashAlgorithm)
+	case crt.LinearProbing:
+		fm, err = lpres.NewLPFilesFromExistingFiles(name, hashAlgorithm)
+	case crt.QuadraticProbing:
+		err = fmt.Errorf("QuadraticProbing not yet implemented")
+	case crt.DoubleHashing:
+		err = fmt.Errorf("DoubleHashing not yet implemented")
+	default:
+		err = fmt.Errorf("crtType %d unknown", header.CollisionResolutionTechnique)
+	}
 	if err != nil {
 		return
 	}
@@ -179,31 +216,32 @@ func NewFromExistingFiles(name string, hashAlgorithm hashfunc.HashAlgorithm) (
 	sp := fm.GetStorageParameters()
 
 	hashMapInfo = HashMapInfo{
-		RecordsPerBucket:        sp.RecordsPerBucket,
-		AverageBucketFillFactor: sp.FillFactor,
-		NumberOfBuckets:         sp.NumberOfBuckets,
-		FileSize:                sp.MapFileSize,
+		NumberOfBucketsNeeded:    int(sp.NumberOfBucketsNeeded),
+		NumberOfBucketsAvailable: int(sp.NumberOfBucketsAvailable),
+		FileSize:                 int(sp.MapFileSize),
 	}
 
 	return
 }
 
 // ReorgConf - Is a struct used in the call to ReorgFiles holding configuration for the new file structure.
-//   - InitialUniqueKeys is the new estimated number of unique keys to store in the hash map files
+//   - CollisionResolutionTechnique is the new CRT to use
+//   - NumberOfBucketsNeeded is the new estimated number of buckets needed store in the hash map files
 //   - KeyExtension is number of bytes to extend the key with
 //   - PrependKeyExtension whether to prepend the extra space or append it
 //   - ValueExtension is number of bytes to extend the value with
 //   - PrependValueExtension whether to prepend the extra space or append it
-//   - NewBucketAlgorithm is the algorithm to use
-//   - OldBucketAlgorithm is the algorithm that was used in the original file hash map
+//   - NewHashAlgorithm is the algorithm to use
+//   - OldHashAlgorithm is the algorithm that was used in the original file hash map
 type ReorgConf struct {
-	InitialUniqueKeys     int64
-	KeyExtension          int64
-	PrependKeyExtension   bool
-	ValueExtension        int64
-	PrependValueExtension bool
-	NewBucketAlgorithm    hashfunc.HashAlgorithm
-	OldBucketAlgorithm    hashfunc.HashAlgorithm
+	CollisionResolutionTechnique int
+	NumberOfBucketsNeeded        int
+	KeyExtension                 int
+	PrependKeyExtension          bool
+	ValueExtension               int
+	PrependValueExtension        bool
+	NewHashAlgorithm             hashfunc.HashAlgorithm
+	OldHashAlgorithm             hashfunc.HashAlgorithm
 }
 
 // ReorgFiles - Is used when existing hash map files needs to reflect new conditions as compared to when they were
@@ -216,8 +254,8 @@ type ReorgConf struct {
 //
 // The reorganization will happen only if there are detectable changes coming from the ReorgConf struct. If the original
 // file hash map was created with internal hashfunc.HashAlgorithm and an empty (fields are Go zero values) ReorgConf struct is supplied,
-// the function returns with no processing. But values higher than zero in any of initialUniqueKeys, KeyExtension or
-// ValueExtension will result in processing. Also, if the existing hash file map was created with custom HashAlgorithm and
+// the function returns with no processing. But values higher than zero in any of CollisionResolutionTechnique, NumberOfBucketsNeeded,
+// KeyExtension or ValueExtension will result in processing. Also, if the existing hash file map was created with custom HashAlgorithm and
 // HashAlgorithm is nil, processing will happen. A non nil HashAlgorithm will always result in processing
 // even if the existing file hash map happens to be created with the exact same.
 //
@@ -243,28 +281,34 @@ func ReorgFiles(name string, reorgConf ReorgConf, force bool) (fromHashMapInfo, 
 	// Sort out new settings and also make sure there are any changes at all (unless force flag has already overridden that)
 	hasChanges := force
 	sp := fromFhm.fileManagement.GetStorageParameters()
-	var initialUniqueKeys, keyLength, valueLength int64
+	var numberOfBucketsNeeded, keyLength, valueLength, crtType int
 	var bucketAlgorithm hashfunc.HashAlgorithm
-	if sp.InitialUniqueKeys != reorgConf.InitialUniqueKeys && reorgConf.InitialUniqueKeys > 0 {
-		initialUniqueKeys = reorgConf.InitialUniqueKeys
+	if sp.CollisionResolutionTechnique != reorgConf.CollisionResolutionTechnique && reorgConf.CollisionResolutionTechnique > 0 {
+		crtType = reorgConf.CollisionResolutionTechnique
 		hasChanges = true
 	} else {
-		initialUniqueKeys = sp.InitialUniqueKeys
+		crtType = sp.CollisionResolutionTechnique
+	}
+	if int(sp.NumberOfBucketsNeeded) != reorgConf.NumberOfBucketsNeeded && reorgConf.NumberOfBucketsNeeded > 0 {
+		numberOfBucketsNeeded = reorgConf.NumberOfBucketsNeeded
+		hasChanges = true
+	} else {
+		numberOfBucketsNeeded = int(sp.NumberOfBucketsNeeded)
 	}
 	if reorgConf.KeyExtension > 0 {
-		keyLength = sp.KeyLength + reorgConf.KeyExtension
+		keyLength = int(sp.KeyLength) + reorgConf.KeyExtension
 		hasChanges = true
 	} else {
-		keyLength = sp.KeyLength
+		keyLength = int(sp.KeyLength)
 	}
 	if reorgConf.ValueExtension > 0 {
-		valueLength = sp.ValueLength + reorgConf.ValueExtension
+		valueLength = int(sp.ValueLength) + reorgConf.ValueExtension
 		hasChanges = true
 	} else {
-		valueLength = sp.ValueLength
+		valueLength = int(sp.ValueLength)
 	}
-	if reorgConf.NewBucketAlgorithm != nil || (reorgConf.NewBucketAlgorithm == nil && !sp.InternalAlgorithm) {
-		bucketAlgorithm = reorgConf.NewBucketAlgorithm
+	if reorgConf.NewHashAlgorithm != nil || (reorgConf.NewHashAlgorithm == nil && !sp.InternalAlgorithm) {
+		bucketAlgorithm = reorgConf.NewHashAlgorithm
 		hasChanges = true
 	}
 	if !hasChanges {
@@ -272,20 +316,20 @@ func ReorgFiles(name string, reorgConf ReorgConf, force bool) (fromHashMapInfo, 
 	}
 
 	// Open existing (we won't use get/set/pop so whatever bucket algorithm is used in the original files is not important)
-	fromFhm, fromHashMapInfo, err = NewFromExistingFiles(name, reorgConf.OldBucketAlgorithm)
+	fromFhm, fromHashMapInfo, err = NewFromExistingFiles(name, reorgConf.OldHashAlgorithm)
 	if err != nil {
 		return
 	}
 	defer fromFhm.CloseFiles()
 
 	// Create new file hash map
-	toFhm, toHashMapInfo, err = NewFileHashMap(newName, initialUniqueKeys, keyLength, valueLength, bucketAlgorithm)
+	toFhm, toHashMapInfo, err = NewFileHashMap(newName, crtType, numberOfBucketsNeeded, keyLength, valueLength, bucketAlgorithm)
 	if err != nil {
 		return
 	}
 	defer toFhm.CloseFiles()
 
-	err = reorgRecords(fromFhm, toFhm, reorgConf, fromFhm.fileManagement.GetStorageParameters().NumberOfBuckets)
+	err = reorgRecords(fromFhm, toFhm, reorgConf, fromFhm.fileManagement.GetStorageParameters().NumberOfBucketsAvailable)
 	if err != nil {
 		return
 	}
@@ -297,7 +341,7 @@ func ReorgFiles(name string, reorgConf ReorgConf, force bool) (fromHashMapInfo, 
 func reorgRecords(from *FileHashMap, to *FileHashMap, reorgConf ReorgConf, fromNBuckets int64) (err error) {
 	var bucket model.Bucket
 	var record model.Record
-	var iter *scres.OverflowRecords
+	var iter *overflow.Records
 	var key, value []byte
 	for i := int64(0); i < fromNBuckets; i++ {
 		bucket, iter, err = from.fileManagement.GetBucket(i)
@@ -305,30 +349,30 @@ func reorgRecords(from *FileHashMap, to *FileHashMap, reorgConf ReorgConf, fromN
 			return
 		}
 
-		// Records from map file
-		for _, record = range bucket.Records {
-			if record.InUse {
-				key = utils.ExtendByteSlice(record.Key, reorgConf.KeyExtension, reorgConf.PrependKeyExtension)
-				value = utils.ExtendByteSlice(record.Value, reorgConf.ValueExtension, reorgConf.PrependValueExtension)
-				err = to.Set(key, value)
-				if err != nil {
-					return
-				}
-			}
-		}
-
-		// Records from overflow file
-		for iter.HasNext() {
-			record, err = iter.Next()
+		// Record from map file
+		if bucket.Record.State == model.RecordOccupied {
+			key = utils.ExtendByteSlice(bucket.Record.Key, int64(reorgConf.KeyExtension), reorgConf.PrependKeyExtension)
+			value = utils.ExtendByteSlice(bucket.Record.Value, int64(reorgConf.ValueExtension), reorgConf.PrependValueExtension)
+			err = to.Set(key, value)
 			if err != nil {
 				return
 			}
-			if record.InUse {
-				key = utils.ExtendByteSlice(record.Key, reorgConf.KeyExtension, reorgConf.PrependKeyExtension)
-				value = utils.ExtendByteSlice(record.Value, reorgConf.ValueExtension, reorgConf.PrependValueExtension)
-				err = to.Set(key, value)
+		}
+
+		// Record from overflow file
+		if iter != nil {
+			for iter.HasNext() {
+				record, err = iter.Next()
 				if err != nil {
 					return
+				}
+				if record.State == model.RecordOccupied {
+					key = utils.ExtendByteSlice(record.Key, int64(reorgConf.KeyExtension), reorgConf.PrependKeyExtension)
+					value = utils.ExtendByteSlice(record.Value, int64(reorgConf.ValueExtension), reorgConf.PrependValueExtension)
+					err = to.Set(key, value)
+					if err != nil {
+						return
+					}
 				}
 			}
 		}

@@ -1,28 +1,28 @@
-package scres
+package overflow
 
 import (
 	"fmt"
+	"github.com/gostonefire/filehashmap/crt"
 	"github.com/gostonefire/filehashmap/internal/model"
-	"github.com/gostonefire/filehashmap/storage"
 )
 
-// OverflowRecords - Is used to iterate over overflow records one by one.
-type OverflowRecords struct {
-	scFiles         *SCFiles
+// Records - Is used to iterate over overflow records one by one.
+type Records struct {
+	getOvflFunc     func(int64) (model.Record, error)
 	overflowAddress int64
 }
 
-// newOverflowRecords - Returns a pointer to a new OverflowRecords struct
-func newOverflowRecords(scFiles *SCFiles, overflowAddress int64) *OverflowRecords {
+// NewRecords - Returns a pointer to a new Records struct
+func NewRecords(getOvflFunc func(int64) (model.Record, error), overflowAddress int64) *Records {
 
-	return &OverflowRecords{
-		scFiles:         scFiles,
+	return &Records{
+		getOvflFunc:     getOvflFunc,
 		overflowAddress: overflowAddress,
 	}
 }
 
 // HasNext - Returns true if there are more records to be fetched from a call to Next.
-func (O *OverflowRecords) HasNext() bool {
+func (O *Records) HasNext() bool {
 	return O.overflowAddress != 0
 }
 
@@ -30,13 +30,13 @@ func (O *OverflowRecords) HasNext() bool {
 // It returns:
 //   - record is the next overflow record.
 //   - err is either a standard error or if there are no more records when calling this function an error of type fhmerrors.NoRecordFound is returned.
-func (O *OverflowRecords) Next() (record model.Record, err error) {
+func (O *Records) Next() (record model.Record, err error) {
 	if O.overflowAddress == 0 {
-		err = storage.NoRecordFound{}
+		err = crt.NoRecordFound{}
 		return
 	}
 
-	record, err = O.scFiles.getOverflowRecord(O.overflowAddress)
+	record, err = O.getOvflFunc(O.overflowAddress)
 	if err != nil {
 		err = fmt.Errorf("error while retrieving record from overflow file: %s", err)
 		return
