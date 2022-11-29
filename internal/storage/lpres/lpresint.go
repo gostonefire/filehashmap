@@ -60,6 +60,25 @@ func (L *LPFiles) openHashMapFile() (header storage.Header, err error) {
 			err = fmt.Errorf("actual file size doesn't conform with header indicated file size")
 			return
 		}
+
+		// Check if we need update header with hash map utilization info
+		if header.FileCloseDate == 0 {
+			header, err = storage.GetFileUtilization(L.mapFile, 0, header)
+			if err != nil {
+				_ = L.mapFile.Close()
+				L.mapFile = nil
+				return
+			}
+		} else {
+			err = storage.SetFileCloseDate(L.mapFile, true)
+			if err != nil {
+				_ = L.mapFile.Close()
+				L.mapFile = nil
+				err = fmt.Errorf("error when trying to write to hash map file")
+				return
+			}
+		}
+
 	} else {
 		err = fmt.Errorf("hash map file not found")
 		return
@@ -70,7 +89,7 @@ func (L *LPFiles) openHashMapFile() (header storage.Header, err error) {
 
 // getBucketRecord - Returns record for a given bucket number in a model.Bucket struct
 func (L *LPFiles) getBucketRecord(bucketNo int64) (bucket model.Bucket, err error) {
-	trueRecordLength := L.keyLength + L.valueLength + stateBytes
+	trueRecordLength := 1 + L.keyLength + L.valueLength // First byte is record state
 	bucketAddress := storage.MapFileHeaderLength + bucketNo*trueRecordLength
 
 	_, err = L.mapFile.Seek(bucketAddress, io.SeekStart)
@@ -84,14 +103,14 @@ func (L *LPFiles) getBucketRecord(bucketNo int64) (bucket model.Bucket, err erro
 		return
 	}
 
-	bucket, err = bytesToBucket(buf, bucketAddress, L.keyLength, L.valueLength)
+	bucket, err = L.bytesToBucket(buf, bucketAddress)
 
 	return
 }
 
 // getBucketNo - Returns which bucket number that the given key results in
 func (L *LPFiles) getBucketNo(key []byte) (bucketNo int64, err error) {
-	bucketNo = L.hashAlgorithm.HashFunc1(key) - L.minBucketNo
+	bucketNo = L.hashAlgorithm.HashFunc1(key)
 	if bucketNo < 0 || bucketNo >= L.numberOfBucketsAvailable {
 		err = fmt.Errorf("recieved bucket number from bucket algorithm is outside permitted range")
 		return
@@ -102,7 +121,7 @@ func (L *LPFiles) getBucketNo(key []byte) (bucketNo int64, err error) {
 
 // setBucketRecord - Sets a bucket record in the hash map file
 func (L *LPFiles) setBucketRecord(record model.Record) (err error) {
-	buf := make([]byte, 1, L.keyLength+L.valueLength+stateBytes)
+	buf := make([]byte, 1, 1+L.keyLength+L.valueLength) // First byte is record state
 	buf[0] = record.State
 
 	buf = append(buf, record.Key...)
@@ -116,6 +135,73 @@ func (L *LPFiles) setBucketRecord(record model.Record) (err error) {
 	_, err = L.mapFile.Write(buf)
 
 	return
+}
+
+// bytesToBucket - Converts bucket raw data to a Bucket struct
+func (L *LPFiles) bytesToBucket(buf []byte, bucketAddress int64) (bucket model.Bucket, err error) {
+	keyStart := int64(1) // First byte is record state
+	valueStart := keyStart + L.keyLength
+
+	key := make([]byte, L.keyLength)
+	value := make([]byte, L.valueLength)
+	_ = copy(key, buf[keyStart:keyStart+L.keyLength])
+	_ = copy(value, buf[valueStart:valueStart+L.valueLength])
+
+	bucket = model.Bucket{
+		Record: model.Record{
+			State:         buf[0],
+			RecordAddress: bucketAddress,
+			Key:           key,
+			Value:         value,
+		},
+		BucketAddress:   bucketAddress,
+		OverflowAddress: 0,
+		HasOverflow:     false,
+	}
+
+	return
+}
+
+// createHeader - Creates a header instance
+func (L *LPFiles) createHeader() (header storage.Header) {
+	header = storage.Header{
+		InternalHash:                 L.internalAlgorithm,
+		KeyLength:                    L.keyLength,
+		ValueLength:                  L.valueLength,
+		NumberOfBucketsNeeded:        L.numberOfBucketsNeeded,
+		NumberOfBucketsAvailable:     L.numberOfBucketsAvailable,
+		MaxBucketNo:                  L.maxBucketNo,
+		FileSize:                     L.mapFileSize,
+		CollisionResolutionTechnique: int64(crt.LinearProbing),
+		NumberOfEmptyRecords:         L.nEmpty,
+		NumberOfOccupiedRecords:      L.nOccupied,
+		NumberOfDeletedRecords:       L.nDeleted,
+	}
+
+	return
+}
+
+// updateUtilizationInfo - Updates information about current utilization
+func (L *LPFiles) updateUtilizationInfo(fromState, toState uint8) {
+	if fromState != toState {
+		switch fromState {
+		case model.RecordEmpty:
+			L.nEmpty--
+		case model.RecordOccupied:
+			L.nOccupied--
+		case model.RecordDeleted:
+			L.nDeleted--
+		}
+
+		switch toState {
+		case model.RecordEmpty:
+			L.nEmpty++
+		case model.RecordOccupied:
+			L.nOccupied++
+		case model.RecordDeleted:
+			L.nDeleted++
+		}
+	}
 }
 
 // linearProbingForGet - Is the Linear Probing Collision Resolution Technique algorithm for getting a record.

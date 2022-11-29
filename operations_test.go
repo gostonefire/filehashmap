@@ -5,12 +5,44 @@ package filehashmap
 import (
 	"fmt"
 	"github.com/gostonefire/filehashmap/crt"
+	"github.com/gostonefire/filehashmap/interfaces"
 	"github.com/gostonefire/filehashmap/internal/utils"
 	"github.com/stretchr/testify/assert"
+	"hash/crc32"
 	"math/rand"
 	"os"
 	"testing"
 )
+
+type TestHashAlgorithm struct {
+	tableSize int64
+}
+
+func NewTestHashAlgorithm(tableSize int64) *TestHashAlgorithm {
+	ha := &TestHashAlgorithm{}
+	ha.UpdateTableSize(tableSize)
+	return ha
+}
+func (T *TestHashAlgorithm) UpdateTableSize(deltaSize int64) {
+	T.tableSize += deltaSize
+}
+func (T *TestHashAlgorithm) HashFunc1(key []byte) int64 {
+	h := int64(crc32.ChecksumIEEE(key))
+	return h % T.tableSize
+}
+func (T *TestHashAlgorithm) HashFunc2(key []byte) int64 {
+	h := int64(crc32.ChecksumIEEE(key))
+	return h % T.tableSize
+}
+func (T *TestHashAlgorithm) HashFunc1MaxValue() int64 {
+	return T.tableSize - 1
+}
+func (T *TestHashAlgorithm) HashFunc2MaxValue() int64 {
+	return T.tableSize - 1
+}
+func (T *TestHashAlgorithm) CombinedHash(hashValue1, hashValue2, iteration int64) int64 {
+	return (hashValue1 + iteration*hashValue2) % T.tableSize
+}
 
 type TestCaseOperations struct {
 	crtName     string
@@ -18,6 +50,7 @@ type TestCaseOperations struct {
 	keyLength   int
 	valueLength int
 	crt         int
+	hFunc       hashfunc.HashAlgorithm
 }
 
 func TestFileHashMap_Set(t *testing.T) {
@@ -26,11 +59,15 @@ func TestFileHashMap_Set(t *testing.T) {
 		tests := []TestCaseOperations{
 			{crtName: "OpenChaining", buckets: 10000, keyLength: 16, valueLength: 10, crt: crt.OpenChaining},
 			{crtName: "LinearProbing", buckets: 10000, keyLength: 16, valueLength: 10, crt: crt.LinearProbing},
+			{crtName: "QuadraticProbing", buckets: 10000, keyLength: 16, valueLength: 10, crt: crt.QuadraticProbing},
+			{crtName: "OpenChainingCustomHash", buckets: 10000, keyLength: 16, valueLength: 10, crt: crt.OpenChaining, hFunc: NewTestHashAlgorithm(10000)},
+			{crtName: "LinearProbingCustomHash", buckets: 10000, keyLength: 16, valueLength: 10, crt: crt.LinearProbing, hFunc: NewTestHashAlgorithm(10000)},
+			{crtName: "QuadraticProbingCustomHash", buckets: 10000, keyLength: 16, valueLength: 10, crt: crt.QuadraticProbing, hFunc: NewTestHashAlgorithm(10000)},
 		}
 
 		for _, test := range tests {
 			t.Run(fmt.Sprintf("sets a new record to file for %s", test.crtName), func(t *testing.T) {
-				fhm, _, err := NewFileHashMap(testHashMap, test.crt, test.buckets, test.keyLength, test.valueLength, nil)
+				fhm, _, err := NewFileHashMap(testHashMap, test.crt, test.buckets, test.keyLength, test.valueLength, test.hFunc)
 				assert.NoError(t, err, "create new file hash map")
 
 				key := []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
@@ -54,7 +91,7 @@ func TestFileHashMap_Set(t *testing.T) {
 
 			t.Run(fmt.Sprintf("updates an existing record in file for %s", test.crtName), func(t *testing.T) {
 				// Prepare
-				fhm, _, err := NewFileHashMap(testHashMap, test.crt, test.buckets, test.keyLength, test.valueLength, nil)
+				fhm, _, err := NewFileHashMap(testHashMap, test.crt, test.buckets, test.keyLength, test.valueLength, test.hFunc)
 				assert.NoError(t, err, "create new file hash map")
 
 				key := []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
@@ -86,7 +123,7 @@ func TestFileHashMap_Set(t *testing.T) {
 
 			t.Run(fmt.Sprintf("throws correct error when key is not found for %s", test.crtName), func(t *testing.T) {
 				// Prepare
-				fhm, _, err := NewFileHashMap(testHashMap, test.crt, test.buckets, test.keyLength, test.valueLength, nil)
+				fhm, _, err := NewFileHashMap(testHashMap, test.crt, test.buckets, test.keyLength, test.valueLength, test.hFunc)
 				assert.NoError(t, err, "create new file hash map struct")
 
 				key := []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
@@ -166,11 +203,15 @@ func TestPop(t *testing.T) {
 		tests := []TestCaseOperations{
 			{crtName: "OpenChaining", buckets: 10, keyLength: 16, valueLength: 10, crt: crt.OpenChaining},
 			{crtName: "LinearProbing", buckets: 1000, keyLength: 16, valueLength: 10, crt: crt.LinearProbing},
+			{crtName: "QuadraticProbing", buckets: 1000, keyLength: 16, valueLength: 10, crt: crt.QuadraticProbing},
+			{crtName: "OpenChainingCustomHash", buckets: 10, keyLength: 16, valueLength: 10, crt: crt.OpenChaining, hFunc: NewTestHashAlgorithm(10)},
+			{crtName: "LinearProbingCustomHash", buckets: 1000, keyLength: 16, valueLength: 10, crt: crt.LinearProbing, hFunc: NewTestHashAlgorithm(1000)},
+			{crtName: "QuadraticProbingCustomHash", buckets: 1000, keyLength: 16, valueLength: 10, crt: crt.QuadraticProbing, hFunc: NewTestHashAlgorithm(1000)},
 		}
 		for _, test := range tests {
 			t.Run(fmt.Sprintf("pops records for %s", test.crtName), func(t *testing.T) {
 				// Prepare
-				fhm, _, err := NewFileHashMap(testHashMap, test.crt, test.buckets, test.keyLength, test.valueLength, nil)
+				fhm, _, err := NewFileHashMap(testHashMap, test.crt, test.buckets, test.keyLength, test.valueLength, test.hFunc)
 				assert.NoError(t, err, "create new file hash map struct")
 
 				keys := make([][]byte, 1000)
@@ -220,12 +261,16 @@ func TestStat(t *testing.T) {
 		tests := []TestCaseOperations{
 			{crtName: "OpenChaining", buckets: 1000, keyLength: 16, valueLength: 10, crt: crt.OpenChaining},
 			{crtName: "LinearProbing", buckets: 1001, keyLength: 16, valueLength: 10, crt: crt.LinearProbing},
+			{crtName: "QuadraticProbing", buckets: 1001, keyLength: 16, valueLength: 10, crt: crt.QuadraticProbing},
+			{crtName: "OpenChainingCustomHash", buckets: 1000, keyLength: 16, valueLength: 10, crt: crt.OpenChaining, hFunc: NewTestHashAlgorithm(1000)},
+			{crtName: "LinearProbingCustomHash", buckets: 1001, keyLength: 16, valueLength: 10, crt: crt.LinearProbing, hFunc: NewTestHashAlgorithm(1001)},
+			{crtName: "QuadraticProbingCustomHash", buckets: 1001, keyLength: 16, valueLength: 10, crt: crt.QuadraticProbing, hFunc: NewTestHashAlgorithm(1001)},
 		}
 
 		for _, test := range tests {
 			t.Run(fmt.Sprintf("produces statistics without distribution for %s", test.crtName), func(t *testing.T) {
 				// Prepare
-				fhm, _, err := NewFileHashMap(testHashMap, test.crt, test.buckets, test.keyLength, test.valueLength, nil)
+				fhm, _, err := NewFileHashMap(testHashMap, test.crt, test.buckets, test.keyLength, test.valueLength, test.hFunc)
 				assert.NoError(t, err, "create new file hash map struct")
 
 				keys := make([][]byte, 1001)

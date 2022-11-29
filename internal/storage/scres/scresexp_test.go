@@ -28,7 +28,7 @@ func TestNewSCFiles(t *testing.T) {
 		scFiles, err := NewSCFiles(crtConf)
 
 		// Check
-		mapFileSize := storage.MapFileHeaderLength + scFiles.numberOfBucketsAvailable*(crtConf.KeyLength+crtConf.ValueLength+stateBytes+bucketHeaderLength)
+		mapFileSize := storage.MapFileHeaderLength + scFiles.numberOfBucketsAvailable*(crtConf.KeyLength+crtConf.ValueLength+1+bucketHeaderLength)
 		assert.NoError(t, err, "create new SCFiles instance")
 		assert.Equal(t, "test-map.bin", scFiles.mapFileName, "map filename correct")
 		assert.Equal(t, "test-ovfl.bin", scFiles.ovflFileName, "overflow filename correct")
@@ -41,6 +41,9 @@ func TestNewSCFiles(t *testing.T) {
 		assert.NotZero(t, scFiles.maxBucketNo, "max bucket number is not zero")
 		assert.Equal(t, scFiles.mapFileSize, mapFileSize, "map file in correct size")
 		assert.NotNil(t, scFiles.hashAlgorithm, "hash algorithm is assigned")
+		assert.Equal(t, scFiles.numberOfBucketsAvailable, scFiles.nEmpty, "all buckets empty")
+		assert.Zero(t, scFiles.nOccupied, "no occupied buckets")
+		assert.Zero(t, scFiles.nDeleted, "no deleted buckets")
 
 		stat, err := os.Stat(scFiles.mapFileName)
 		assert.NoError(t, err, "map file exists")
@@ -80,7 +83,7 @@ func TestNewSCFilesFromExistingFiles(t *testing.T) {
 		scFiles, err := NewSCFilesFromExistingFiles("test", nil)
 
 		// Check
-		mapFileSize := storage.MapFileHeaderLength + scFiles.numberOfBucketsAvailable*(crtConf.KeyLength+crtConf.ValueLength+stateBytes+bucketHeaderLength)
+		mapFileSize := storage.MapFileHeaderLength + scFiles.numberOfBucketsAvailable*(crtConf.KeyLength+crtConf.ValueLength+1+bucketHeaderLength)
 		assert.NoError(t, err, "opens existing files")
 		assert.Equal(t, "test-map.bin", scFiles.mapFileName, "map filename correct")
 		assert.Equal(t, "test-ovfl.bin", scFiles.ovflFileName, "overflow filename correct")
@@ -93,6 +96,9 @@ func TestNewSCFilesFromExistingFiles(t *testing.T) {
 		assert.NotZero(t, scFiles.maxBucketNo, "max bucket number is not zero")
 		assert.Equal(t, scFiles.mapFileSize, mapFileSize, "map file in correct size")
 		assert.NotNil(t, scFiles.hashAlgorithm, "hash algorithm is assigned")
+		assert.Equal(t, scFiles.numberOfBucketsAvailable, scFiles.nEmpty, "all buckets empty")
+		assert.Zero(t, scFiles.nOccupied, "no occupied buckets")
+		assert.Zero(t, scFiles.nDeleted, "no deleted buckets")
 
 		// Clean up
 		scFiles.CloseFiles()

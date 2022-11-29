@@ -14,9 +14,21 @@ type SingleHashAlgorithm struct {
 }
 
 // NewSingleHashAlgorithm - Returns a pointer to a new SingleHashAlgorithm instance
+// It sets an initial value for the table size but that size may be updated to a new value depending on
+// chosen Collision Probing Algorithm
 func NewSingleHashAlgorithm(tableSize int64) *SingleHashAlgorithm {
-	exp := int64(math.Ceil(math.Log2(float64(tableSize)) / math.Log2(2)))
-	return &SingleHashAlgorithm{tableSize: tableSize, exp: exp}
+	ha := &SingleHashAlgorithm{}
+	ha.UpdateTableSize(tableSize)
+	return ha
+}
+
+// UpdateTableSize - Updates the table size for the hash algorithm.
+// This function will be used in for instance Quadratic Probing where we need one extra always empty bucket to
+// stop probing for finding existing records for a Get or for update in a Set
+//   - deltaSize is the number of buckets to extend (or decrease if a negative number is given) the table size with
+func (B *SingleHashAlgorithm) UpdateTableSize(deltaSize int64) {
+	B.tableSize += deltaSize
+	B.exp = int64(math.Ceil(math.Log2(float64(B.tableSize)) / math.Log2(2)))
 }
 
 // HashFunc1 - Given key it generates a bucket number between minValue and maxValue (inclusive)
@@ -32,19 +44,15 @@ func (B *SingleHashAlgorithm) HashFunc2(key []byte) int64 {
 	return h % B.tableSize
 }
 
-// RangeHashFunc1 - Returns the min and max (inclusive) that HashFunc1 will ever return.
-func (B *SingleHashAlgorithm) RangeHashFunc1() (minValue, maxValue int64) {
-	minValue = 0
-	maxValue = 1<<B.exp - 1
-	return
+// HashFunc1MaxValue - Returns the max value that HashFunc1 will ever return.
+func (B *SingleHashAlgorithm) HashFunc1MaxValue() int64 {
+	return 1<<B.exp - 1
 }
 
-// RangeHashFunc2 - Returns the min and max (inclusive) that HashFunc2 will ever return.
+// HashFunc2MaxValue - Returns the max value that HashFunc2 will ever return.
 // This function is only used in Double Hash algorithms, but implemented here to follow the interface.
-func (B *SingleHashAlgorithm) RangeHashFunc2() (minValue, maxValue int64) {
-	minValue = 0
-	maxValue = B.tableSize - 1
-	return
+func (B *SingleHashAlgorithm) HashFunc2MaxValue() int64 {
+	return B.tableSize - 1
 }
 
 // CombinedHash - Returns a combined hash value given values from hash functions 1 and 2 with iteration.

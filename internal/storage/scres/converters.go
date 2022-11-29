@@ -11,7 +11,7 @@ func bytesToBucket(buf []byte, bucketAddress, keyLength, valueLength int64) (buc
 	overFlowAddress := int64(binary.LittleEndian.Uint64(buf[bucketOverflowAddressOffset:]))
 
 	recordStart := bucketHeaderLength
-	keyStart := recordStart + stateBytes
+	keyStart := 1 + recordStart // First byte is record state
 	valueStart := keyStart + keyLength
 
 	key := make([]byte, keyLength)
@@ -37,14 +37,14 @@ func bytesToBucket(buf []byte, bucketAddress, keyLength, valueLength int64) (buc
 // overflowBytesToRecord - Converts record raw data for overflow to Record struct
 func overflowBytesToRecord(buf []byte, recordAddress, keyLength, valueLength int64) (record model.Record, err error) {
 	actual := int64(len(buf))
-	trueRecordLength := keyLength + valueLength + stateBytes
+	trueRecordLength := 1 + keyLength + valueLength // First byte is record state
 	expected := trueRecordLength + overflowAddressLength
 
 	if expected > actual {
 		err = fmt.Errorf("length of data in buf (%d) less than overflow record size (%d)", actual, expected)
 	}
 
-	keyStart := overflowAddressLength + stateBytes
+	keyStart := 1 + overflowAddressLength // First byte is record state
 	keyEnd := keyStart + keyLength
 	valueStart := keyEnd
 
@@ -67,7 +67,7 @@ func overflowBytesToRecord(buf []byte, recordAddress, keyLength, valueLength int
 
 // recordToOverflowBytes - Converts a Record struct for overflow to bytes
 func recordToOverflowBytes(record model.Record, keyLength, valueLength int64) (buf []byte) {
-	buf = make([]byte, overflowAddressLength+stateBytes, keyLength+valueLength+overflowAddressLength)
+	buf = make([]byte, 1+overflowAddressLength, keyLength+valueLength+overflowAddressLength) // First byte is record state
 	binary.LittleEndian.PutUint64(buf, uint64(record.NextOverflow))
 	buf[overflowAddressLength] = record.State
 	buf = append(buf, record.Key...)

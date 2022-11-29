@@ -31,6 +31,7 @@ func TestNewFileHashMap(t *testing.T) {
 		tests := []TestCaseFileHashMap{
 			{crtToName: "OpenChaining", toBuckets: 100000, keyLength: 16, valueLength: 10, toCrt: crt.OpenChaining},
 			{crtToName: "LinearProbing", toBuckets: 100000, keyLength: 16, valueLength: 10, toCrt: crt.LinearProbing},
+			{crtToName: "QuadraticProbing", toBuckets: 100000, keyLength: 16, valueLength: 10, toCrt: crt.QuadraticProbing},
 		}
 
 		for _, test := range tests {
@@ -111,6 +112,7 @@ func TestNewFromExistingFiles(t *testing.T) {
 		tests := []TestCaseFileHashMap{
 			{crtToName: "OpenChaining", toBuckets: 100000, keyLength: 16, valueLength: 10, toCrt: crt.OpenChaining},
 			{crtToName: "LinearProbing", toBuckets: 100000, keyLength: 16, valueLength: 10, toCrt: crt.LinearProbing},
+			{crtToName: "QuadraticProbing", toBuckets: 100000, keyLength: 16, valueLength: 10, toCrt: crt.QuadraticProbing},
 		}
 
 		for _, test := range tests {
@@ -158,8 +160,13 @@ func TestReorgFiles(t *testing.T) {
 		tests := []TestCaseFileHashMap{
 			{crtFromName: "OpenChaining", crtToName: "OpenChaining", fromBuckets: 10, toBuckets: 100, keyLength: 5, valueLength: 10, fromCrt: crt.OpenChaining, toCrt: crt.OpenChaining},
 			{crtFromName: "LinearProbing", crtToName: "LinearProbing", fromBuckets: 100, toBuckets: 100, keyLength: 5, valueLength: 10, fromCrt: crt.LinearProbing, toCrt: crt.LinearProbing},
+			{crtFromName: "QuadraticProbing", crtToName: "QuadraticProbing", fromBuckets: 100, toBuckets: 100, keyLength: 5, valueLength: 10, fromCrt: crt.QuadraticProbing, toCrt: crt.QuadraticProbing},
 			{crtFromName: "OpenChaining", crtToName: "LinearProbing", fromBuckets: 10, toBuckets: 100, keyLength: 5, valueLength: 10, fromCrt: crt.OpenChaining, toCrt: crt.LinearProbing},
 			{crtFromName: "LinearProbing", crtToName: "OpenChaining", fromBuckets: 100, toBuckets: 10, keyLength: 5, valueLength: 10, fromCrt: crt.LinearProbing, toCrt: crt.OpenChaining},
+			{crtFromName: "OpenChaining", crtToName: "QuadraticProbing", fromBuckets: 10, toBuckets: 100, keyLength: 5, valueLength: 10, fromCrt: crt.OpenChaining, toCrt: crt.QuadraticProbing},
+			{crtFromName: "QuadraticProbing", crtToName: "OpenChaining", fromBuckets: 100, toBuckets: 10, keyLength: 5, valueLength: 10, fromCrt: crt.QuadraticProbing, toCrt: crt.OpenChaining},
+			{crtFromName: "LinearProbing", crtToName: "QuadraticProbing", fromBuckets: 100, toBuckets: 100, keyLength: 5, valueLength: 10, fromCrt: crt.LinearProbing, toCrt: crt.QuadraticProbing},
+			{crtFromName: "QuadraticProbing", crtToName: "LinearProbing", fromBuckets: 100, toBuckets: 100, keyLength: 5, valueLength: 10, fromCrt: crt.QuadraticProbing, toCrt: crt.LinearProbing},
 		}
 
 		for _, test := range tests {
@@ -233,7 +240,7 @@ func TestReorgFiles(t *testing.T) {
 				err = os.Remove(mapFileName)
 				assert.NoError(t, err, "backup map file can be removed after close")
 
-				if _, err = os.Stat(ovflFileName); err != nil {
+				if _, err = os.Stat(ovflFileName); err == nil {
 					err = os.Remove(ovflFileName)
 					assert.NoError(t, err, "backup overflow file can be removed after close")
 				}

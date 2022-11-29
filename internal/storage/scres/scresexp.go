@@ -29,6 +29,9 @@ type SCFiles struct {
 	mapFileSize              int64
 	hashAlgorithm            hashfunc.HashAlgorithm
 	internalAlgorithm        bool
+	nEmpty                   int64
+	nOccupied                int64
+	nDeleted                 int64
 }
 
 // NewSCFiles - Returns a pointer to a new instance of Separate Chaining file implementation.
@@ -47,11 +50,10 @@ func NewSCFiles(crtConf model.CRTConf) (scFiles *SCFiles, err error) {
 	}
 
 	// Calculate the hash map file various parameters
-	trueRecordLength := crtConf.KeyLength + crtConf.ValueLength + stateBytes
-	minBucketNo, maxBucketNo := crtConf.HashAlgorithm.RangeHashFunc1()
-	numberOfBucketsAvailable := maxBucketNo - minBucketNo + 1
-	bucketLength := trueRecordLength + bucketHeaderLength
-	fileSize := bucketLength*numberOfBucketsAvailable + storage.MapFileHeaderLength
+	bucketLength := bucketHeaderLength + 1 + crtConf.KeyLength + crtConf.ValueLength // First byte is record state
+	maxBucketNo := crtConf.HashAlgorithm.HashFunc1MaxValue()
+	numberOfBuckets := maxBucketNo + 1
+	fileSize := bucketLength*numberOfBuckets + storage.MapFileHeaderLength
 
 	scFiles = &SCFiles{
 		mapFileName:              storage.GetMapFileName(crtConf.Name),
@@ -59,25 +61,17 @@ func NewSCFiles(crtConf model.CRTConf) (scFiles *SCFiles, err error) {
 		keyLength:                crtConf.KeyLength,
 		valueLength:              crtConf.ValueLength,
 		numberOfBucketsNeeded:    crtConf.NumberOfBucketsNeeded,
-		numberOfBucketsAvailable: numberOfBucketsAvailable,
-		minBucketNo:              minBucketNo,
+		numberOfBucketsAvailable: numberOfBuckets,
 		maxBucketNo:              maxBucketNo,
 		mapFileSize:              fileSize,
 		hashAlgorithm:            crtConf.HashAlgorithm,
 		internalAlgorithm:        internalAlg,
+		nEmpty:                   numberOfBuckets,
+		nOccupied:                0,
+		nDeleted:                 0,
 	}
 
-	header := storage.Header{
-		InternalHash:                 internalAlg,
-		KeyLength:                    crtConf.KeyLength,
-		ValueLength:                  crtConf.ValueLength,
-		NumberOfBucketsNeeded:        crtConf.NumberOfBucketsNeeded,
-		NumberOfBucketsAvailable:     numberOfBucketsAvailable,
-		MinBucketNo:                  minBucketNo,
-		MaxBucketNo:                  maxBucketNo,
-		FileSize:                     fileSize,
-		CollisionResolutionTechnique: int64(crt.OpenChaining),
-	}
+	header := scFiles.createHeader()
 
 	err = scFiles.createNewHashMapFile(header)
 	if err != nil {
@@ -138,11 +132,13 @@ func NewSCFilesFromExistingFiles(name string, hashAlgorithm hashfunc.HashAlgorit
 	scFiles.valueLength = header.ValueLength
 	scFiles.numberOfBucketsNeeded = header.NumberOfBucketsNeeded
 	scFiles.numberOfBucketsAvailable = header.NumberOfBucketsAvailable
-	scFiles.minBucketNo = header.MinBucketNo
 	scFiles.maxBucketNo = header.MaxBucketNo
 	scFiles.mapFileSize = header.FileSize
 	scFiles.hashAlgorithm = hashAlgorithm
 	scFiles.internalAlgorithm = internalAlg
+	scFiles.nEmpty = header.NumberOfEmptyRecords
+	scFiles.nOccupied = header.NumberOfOccupiedRecords
+	scFiles.nDeleted = header.NumberOfDeletedRecords
 
 	return
 }
@@ -155,6 +151,11 @@ func (S *SCFiles) CloseFiles() {
 	}
 
 	if S.mapFile != nil {
+		header := S.createHeader()
+		err := storage.SetHeader(S.mapFile, header)
+		if err == nil {
+			_ = storage.SetFileCloseDate(S.mapFile, false)
+		}
 		_ = S.mapFile.Sync()
 		_ = S.mapFile.Close()
 	}
@@ -300,14 +301,18 @@ func (S *SCFiles) Set(record model.Record) (err error) {
 	// empty (never used) then we now that we can set the record and avoid searching in overflow file.
 	// If we have a deleted record then save that for potential later use, but we have to search in overflow file as well.
 	var hasDeleted bool
+	var fromState uint8
 	var deletedRecord, ovflRecord model.Record
 	if (bucket.Record.State == model.RecordOccupied && utils.IsEqual(record.Key, bucket.Record.Key)) || bucket.Record.State == model.RecordEmpty {
+		fromState = bucket.Record.State
 		bucket.Record.State = model.RecordOccupied
 		bucket.Record.Key = record.Key
 		bucket.Record.Value = record.Value
 		err = S.setBucketRecord(bucket.Record)
 		if err != nil {
 			err = fmt.Errorf("error while updating or adding record to bucket or overflow: %s", err)
+		} else {
+			S.updateUtilizationInfo(fromState, bucket.Record.State)
 		}
 		return
 	} else if bucket.Record.State == model.RecordDeleted {
@@ -341,16 +346,22 @@ func (S *SCFiles) Set(record model.Record) (err error) {
 	// Having come to this part we didn't find any matching record, so set our new record in an available (deleted) spot
 	// if such was found earlier.
 	if hasDeleted {
+		fromState = deletedRecord.State
 		deletedRecord.State = model.RecordOccupied
 		deletedRecord.Key = record.Key
 		deletedRecord.Value = record.Value
 		if deletedRecord.IsOverflow {
 			err = S.setOverflowRecord(deletedRecord)
+			if err != nil {
+				err = fmt.Errorf("error while updating or adding record to bucket or overflow: %s", err)
+			}
 		} else {
 			err = S.setBucketRecord(deletedRecord)
-		}
-		if err != nil {
-			err = fmt.Errorf("error while updating or adding record to bucket or overflow: %s", err)
+			if err != nil {
+				err = fmt.Errorf("error while updating or adding record to bucket or overflow: %s", err)
+			} else {
+				S.updateUtilizationInfo(fromState, deletedRecord.State)
+			}
 		}
 		return
 	}
@@ -388,14 +399,23 @@ func (S *SCFiles) Set(record model.Record) (err error) {
 // It returns:
 //   - err is a standard error, if something went wrong
 func (S *SCFiles) Delete(record model.Record) (err error) {
+	fromState := record.State
 	record.State = model.RecordDeleted
 	record.Key = make([]byte, S.keyLength)
 	record.Value = make([]byte, S.valueLength)
 
 	if record.IsOverflow {
 		err = S.setOverflowRecord(record)
+		if err != nil {
+			err = fmt.Errorf("error while updating record in overflow: %s", err)
+		}
 	} else {
 		err = S.setBucketRecord(record)
+		if err != nil {
+			err = fmt.Errorf("error while updating record in bucket: %s", err)
+		} else {
+			S.updateUtilizationInfo(fromState, record.State)
+		}
 	}
 
 	return

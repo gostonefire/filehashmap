@@ -75,7 +75,7 @@ Of course, keys will never be perfectly distributed over available buckets so a 
 needed. The FileHashMap implements several that can be chosen from, and they all work slightly different.
   * Open Chaining
   * Linear Probing
-  * Quadratic Probing (not yet implemented)
+  * Quadratic Probing
   * Double Hashing (not yet implemented)
 
 Out of the four, the Open Chaining is the one that differs the most. It resolves conflict by linking conflicting record
@@ -88,6 +88,13 @@ The other three options uses a fixed size map table only, hence it will not allo
 available buckets. Also, they use a probing technique which means at time of collision they seek (using different techniques)
 for an available bucket. This can be very time-consuming when number of buckets is very large and when we are having only a few 
 free buckets left. Linear and Quadratic Probing also suffers from clustering issues.
+
+#### Note on Quadratic Probing
+Quadratic probing uses a quadratic formula to ensure that probing jumps around and not continue to build on a local cluster, but this
+also means that without choosing some specific parameters it could end up not finding specific empty records in the map file.
+
+There are several techniques that can be used to solve this issue and the one chosen in this implementation is using a roundUp2(m) function
+which can be read about in [Wikipedia](https://en.wikipedia.org/wiki/Quadratic_probing#Quadratic_function) the fifth bullet under examples.
 
 ### Creating a file hash map:
 The NewFileHashMap function creates a new instance and file(s) are created according choice of collision resolution technique.
@@ -324,6 +331,7 @@ The calling parameters are:
 
 Returned data is:
   * err - An error of type crt.MapFileFull if no available buckets were found (N/A for crt.OpenChaining) or a standard Go error if something else went wrong.
+    For the Quadratic Probing there is also a built-in failsafe that could (but should not) throw an error of type crt.ProbingAlgorithm 
 
 ```
 keyA := []byte{0, 1, 2, 3, 4, 5, 6, 7}
@@ -346,6 +354,8 @@ The calling parameters are:
 Returned data is:
   * value - The value of the record identified by the key, or nil if no record was found.
   * err - An error of type crt.NoRecordFound if no record was found, or a standard Go error if something else went wrong.
+    For the Quadratic Probing there is also a built-in failsafe that could (but should not) throw an error of type crt.ProbingAlgorithm
+
 
 ```
 valueC, err := fhm.Get(keyC)
@@ -368,6 +378,8 @@ The calling parameters are:
 Returned data is:
   * value - The value of the record identified by the key, or nil if no record was found.
   * err - An error of type crt.NoRecordFound if no record was found, or a standard Go error if something else went wrong.
+    For the Quadratic Probing there is also a built-in failsafe that could (but should not) throw an error of type crt.ProbingAlgorithm
+
 
 ```
 valueC, err := fhm.Pop(keyC)
@@ -424,23 +436,25 @@ awkward and could gain from having a better fitting algorithm to avoid too much 
 // HashAlgorithm - Interface that permits an implementation using the FileHashMap to supply a custom bucket
 // selection algorithm suited for its particular distribution of keys.
 type HashAlgorithm interface {
+	// UpdateTableSize - Updates the table size for the hash algorithm.
+	// This function will be used in for instance Quadratic Probing where we need one extra always empty bucket to
+	// stop probing for finding existing records for a Get or for update in a Set
+	//   - deltaSize is the number of buckets to extend (or decrease if a negative number is given) the table size with
+	UpdateTableSize(deltaSize int64)
 	// HashFunc1 - Given key it generates a bucket number between minValue and maxValue (inclusive)
 	// Any number returned outside the minValue/maxValue (inclusive) range will result in an error down stream.
 	HashFunc1(key []byte) int64
 	// HashFunc2 - Given key it generates a bucket number between minValue and maxValue (inclusive)
 	// Any number returned outside the minValue/maxValue (inclusive) range will result in an error down stream.
 	HashFunc2(key []byte) int64
-	// RangeHashFunc1 - Returns the min and max (inclusive) that HashFunc1 will ever return.
-	RangeHashFunc1() (minValue, maxValue int64)
-	// RangeHashFunc2 - Returns the min and max (inclusive) that HashFunc2 will ever return.
-	RangeHashFunc2() (minValue, maxValue int64)
+	// HashFunc1MaxValue - Returns the max value that HashFunc1 will ever return.
+	HashFunc1MaxValue() int64
+	// HashFunc2MaxValue - Returns the max value that HashFunc2 will ever return.
+	HashFunc2MaxValue() int64
 	// CombinedHash - Returns a combined hash value given values from hash functions 1 and 2 with iteration.
 	CombinedHash(hashValue1, hashValue2, iteration int64) int64
 }
 ```
-
-Internally every bucket number is transformed to zero based before applying to the map, i.e. number from HashFunc1 -
-minValue from RangeHashFunc1. 
 
 The internal implementation should result in good enough keys for most situation though:
 NOTE! It will likely change once Double Hashing is implemented.
@@ -460,9 +474,21 @@ type SingleHashAlgorithm struct {
 }
 
 // NewSingleHashAlgorithm - Returns a pointer to a new SingleHashAlgorithm instance
+// It sets an initial value for the table size but that size may be updated to a new value depending on
+// chosen Collision Probing Algorithm
 func NewSingleHashAlgorithm(tableSize int64) *SingleHashAlgorithm {
-	exp := int64(math.Ceil(math.Log2(float64(tableSize)) / math.Log2(2)))
-	return &SingleHashAlgorithm{tableSize: tableSize, exp: exp}
+	ha := &SingleHashAlgorithm{}
+	ha.UpdateTableSize(tableSize)
+	return ha
+}
+
+// UpdateTableSize - Updates the table size for the hash algorithm.
+// This function will be used in for instance Quadratic Probing where we need one extra always empty bucket to
+// stop probing for finding existing records for a Get or for update in a Set
+//   - deltaSize is the number of buckets to extend (or decrease if a negative number is given) the table size with
+func (B *SingleHashAlgorithm) UpdateTableSize(deltaSize int64) {
+	B.tableSize += deltaSize
+	B.exp = int64(math.Ceil(math.Log2(float64(B.tableSize)) / math.Log2(2)))
 }
 
 // HashFunc1 - Given key it generates a bucket number between minValue and maxValue (inclusive)
@@ -478,19 +504,15 @@ func (B *SingleHashAlgorithm) HashFunc2(key []byte) int64 {
 	return h % B.tableSize
 }
 
-// RangeHashFunc1 - Returns the min and max (inclusive) that HashFunc1 will ever return.
-func (B *SingleHashAlgorithm) RangeHashFunc1() (minValue, maxValue int64) {
-	minValue = 0
-	maxValue = 1<<B.exp - 1
-	return
+// HashFunc1MaxValue - Returns the max value that HashFunc1 will ever return.
+func (B *SingleHashAlgorithm) HashFunc1MaxValue() int64 {
+	return 1<<B.exp - 1
 }
 
-// RangeHashFunc2 - Returns the min and max (inclusive) that HashFunc2 will ever return.
+// HashFunc2MaxValue - Returns the max value that HashFunc2 will ever return.
 // This function is only used in Double Hash algorithms, but implemented here to follow the interface.
-func (B *SingleHashAlgorithm) RangeHashFunc2() (minValue, maxValue int64) {
-	minValue = 0
-	maxValue = B.tableSize - 1
-	return
+func (B *SingleHashAlgorithm) HashFunc2MaxValue() int64 {
+	return B.tableSize - 1
 }
 
 // CombinedHash - Returns a combined hash value given values from hash functions 1 and 2 with iteration.

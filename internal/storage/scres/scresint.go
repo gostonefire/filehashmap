@@ -3,6 +3,7 @@ package scres
 import (
 	"encoding/binary"
 	"fmt"
+	"github.com/gostonefire/filehashmap/crt"
 	"github.com/gostonefire/filehashmap/internal/model"
 	"github.com/gostonefire/filehashmap/internal/storage"
 	"io"
@@ -33,6 +34,25 @@ func (S *SCFiles) openHashMapFile() (header storage.Header, err error) {
 			err = fmt.Errorf("actual file size doesn't conform with header indicated file size")
 			return
 		}
+
+		// Check if we need update header with hash map utilization info
+		if header.FileCloseDate == 0 {
+			header, err = storage.GetFileUtilization(S.mapFile, 0, header)
+			if err != nil {
+				_ = S.mapFile.Close()
+				S.mapFile = nil
+				return
+			}
+		} else {
+			err = storage.SetFileCloseDate(S.mapFile, true)
+			if err != nil {
+				_ = S.mapFile.Close()
+				S.mapFile = nil
+				err = fmt.Errorf("error when trying to write to hash map file")
+				return
+			}
+		}
+
 	} else {
 		err = fmt.Errorf("hash map file not found")
 		return
@@ -110,7 +130,7 @@ func (S *SCFiles) createNewOverflowFile() (err error) {
 
 // getBucketRecord - Returns all records for a given bucket number in a model.Bucket struct
 func (S *SCFiles) getBucketRecord(bucketNo int64) (bucket model.Bucket, err error) {
-	trueRecordLength := S.keyLength + S.valueLength + stateBytes
+	trueRecordLength := 1 + S.keyLength + S.valueLength // First byte is record state
 	bucketAddress := storage.MapFileHeaderLength + bucketNo*(trueRecordLength+bucketHeaderLength)
 
 	_, err = S.mapFile.Seek(bucketAddress, io.SeekStart)
@@ -131,7 +151,7 @@ func (S *SCFiles) getBucketRecord(bucketNo int64) (bucket model.Bucket, err erro
 
 // setBucketRecord - Sets a bucket record in the hash map file
 func (S *SCFiles) setBucketRecord(record model.Record) (err error) {
-	buf := make([]byte, 1, S.keyLength+S.valueLength+stateBytes)
+	buf := make([]byte, 1, 1+S.keyLength+S.valueLength) // First byte is record state
 	buf[0] = record.State
 
 	buf = append(buf, record.Key...)
@@ -167,7 +187,7 @@ func (S *SCFiles) setBucketOverflowAddress(bucketAddress, overflowAddress int64)
 
 // getOverflowRecord - Gets a model.Record from the overflow file
 func (S *SCFiles) getOverflowRecord(recordAddress int64) (record model.Record, err error) {
-	trueRecordLength := S.keyLength + S.valueLength + stateBytes
+	trueRecordLength := 1 + S.keyLength + S.valueLength // First byte is record state
 	_, err = S.ovflFile.Seek(recordAddress, io.SeekStart)
 	if err != nil {
 		return
@@ -236,7 +256,7 @@ func (S *SCFiles) newBucketOverflow(key, value []byte) (overflowAddress int64, e
 		return
 	}
 
-	buf := make([]byte, overflowAddressLength+stateBytes, S.keyLength+S.valueLength+overflowAddressLength)
+	buf := make([]byte, 1+overflowAddressLength, S.keyLength+S.valueLength+overflowAddressLength) // First byte is record state
 	buf[overflowAddressLength] = model.RecordOccupied
 	buf = append(buf, key...)
 	buf = append(buf, value...)
@@ -247,4 +267,46 @@ func (S *SCFiles) newBucketOverflow(key, value []byte) (overflowAddress int64, e
 	}
 
 	return
+}
+
+// createHeader - Creates a header instance
+func (S *SCFiles) createHeader() (header storage.Header) {
+	header = storage.Header{
+		InternalHash:                 S.internalAlgorithm,
+		KeyLength:                    S.keyLength,
+		ValueLength:                  S.valueLength,
+		NumberOfBucketsNeeded:        S.numberOfBucketsNeeded,
+		NumberOfBucketsAvailable:     S.numberOfBucketsAvailable,
+		MaxBucketNo:                  S.maxBucketNo,
+		FileSize:                     S.mapFileSize,
+		CollisionResolutionTechnique: int64(crt.OpenChaining),
+		NumberOfEmptyRecords:         S.nEmpty,
+		NumberOfOccupiedRecords:      S.nOccupied,
+		NumberOfDeletedRecords:       S.nDeleted,
+	}
+
+	return
+}
+
+// updateUtilizationInfo - Updates information about current utilization
+func (S *SCFiles) updateUtilizationInfo(fromState, toState uint8) {
+	if fromState != toState {
+		switch fromState {
+		case model.RecordEmpty:
+			S.nEmpty--
+		case model.RecordOccupied:
+			S.nOccupied--
+		case model.RecordDeleted:
+			S.nDeleted--
+		}
+
+		switch toState {
+		case model.RecordEmpty:
+			S.nEmpty++
+		case model.RecordOccupied:
+			S.nOccupied++
+		case model.RecordDeleted:
+			S.nDeleted++
+		}
+	}
 }

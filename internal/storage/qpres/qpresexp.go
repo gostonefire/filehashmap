@@ -1,4 +1,4 @@
-package lpres
+package qpres
 
 import (
 	"fmt"
@@ -11,11 +11,11 @@ import (
 	"os"
 )
 
-// LPFiles - Represents an implementation of file support for the Linear Probing Collision Resolution Technique.
+// QPFiles - Represents an implementation of file support for the Quadratic Probing Collision Resolution Technique.
 // It uses one file of buckets where each bucket represents a record. In case of a collision, it probes through
-// the hash table linearly, looking for an empty slot, and assigns the free slot to the value. Once all free slots are
-// occupied the table will accept no more records.
-type LPFiles struct {
+// the hash table using a quadratic algorithm, looking for an empty slot, and assigns the free slot to the value.
+// Once all free slots are occupied the table will accept no more records.
+type QPFiles struct {
 	mapFileName              string
 	mapFile                  *os.File
 	keyLength                int64
@@ -26,19 +26,20 @@ type LPFiles struct {
 	mapFileSize              int64
 	hashAlgorithm            hashfunc.HashAlgorithm
 	internalAlgorithm        bool
+	roundUp2                 int64
 	nEmpty                   int64
 	nOccupied                int64
 	nDeleted                 int64
 }
 
-// NewLPFiles - Returns a pointer to a new instance of Linear Probing file implementation.
+// NewQPFiles - Returns a pointer to a new instance of Quadratic Probing file implementation.
 // It always creates a new file (or opens and truncate existing file)
 //   - crtConf is a model.CRTConf struct providing configuration parameter affecting files creation and processing
 //
 // It returns:
-//   - lpFiles which is a pointer to the created instance
+//   - qpFiles which is a pointer to the created instance
 //   - err which is a standard Go type of error
-func NewLPFiles(crtConf model.CRTConf) (lpFiles *LPFiles, err error) {
+func NewQPFiles(crtConf model.CRTConf) (qpFiles *QPFiles, err error) {
 	// If no HashAlgorithm was given then use the default internal
 	var internalAlg bool
 	if crtConf.HashAlgorithm == nil {
@@ -46,13 +47,26 @@ func NewLPFiles(crtConf model.CRTConf) (lpFiles *LPFiles, err error) {
 		internalAlg = true
 	}
 
+	// Add one extra bucket to be the golden bucket never to be occupied to assist the Quadratic Probing algorithm
+	crtConf.HashAlgorithm.UpdateTableSize(1)
+
 	// Calculate the hash map file various parameters
 	bucketLength := 1 + crtConf.KeyLength + crtConf.ValueLength // First byte is record state
 	maxBucketNo := crtConf.HashAlgorithm.HashFunc1MaxValue()
 	numberOfBuckets := maxBucketNo + 1
 	fileSize := bucketLength*numberOfBuckets + storage.MapFileHeaderLength
 
-	lpFiles = &LPFiles{
+	// Calculate the round up number of buckets to the closest power of 2, will be used in Quadratic Probing
+	r := uint64(numberOfBuckets - 1)
+	r |= r >> 1
+	r |= r >> 2
+	r |= r >> 4
+	r |= r >> 8
+	r |= r >> 16
+	r |= r >> 32
+	roundUp2 := int64(r + 1)
+
+	qpFiles = &QPFiles{
 		mapFileName:              storage.GetMapFileName(crtConf.Name),
 		keyLength:                crtConf.KeyLength,
 		valueLength:              crtConf.ValueLength,
@@ -62,14 +76,15 @@ func NewLPFiles(crtConf model.CRTConf) (lpFiles *LPFiles, err error) {
 		mapFileSize:              fileSize,
 		hashAlgorithm:            crtConf.HashAlgorithm,
 		internalAlgorithm:        internalAlg,
+		roundUp2:                 roundUp2,
 		nEmpty:                   numberOfBuckets,
 		nOccupied:                0,
 		nDeleted:                 0,
 	}
 
-	header := lpFiles.createHeader()
+	header := qpFiles.createHeader()
 
-	err = lpFiles.createNewHashMapFile(header)
+	err = qpFiles.createNewHashMapFile(header)
 	if err != nil {
 		return
 	}
@@ -77,32 +92,32 @@ func NewLPFiles(crtConf model.CRTConf) (lpFiles *LPFiles, err error) {
 	return
 }
 
-// NewLPFilesFromExistingFiles - Returns a pointer to a new instance of Linear Probing file implementation given
+// NewQPFilesFromExistingFiles - Returns a pointer to a new instance of Quadratic Probing file implementation given
 // existing files. If files doesn't exist, doesn't have a valid header or if its file size seems wrong given
 // size from header it fails with error.
 //   - Name is the name to base map file name on
 //
 // It returns:
-//   - lpFiles which is a pointer to the created instance
+//   - qpFiles which is a pointer to the created instance
 //   - err which is a standard Go type of error
-func NewLPFilesFromExistingFiles(name string, hashAlgorithm hashfunc.HashAlgorithm) (lpFiles *LPFiles, err error) {
+func NewQPFilesFromExistingFiles(name string, hashAlgorithm hashfunc.HashAlgorithm) (qpFiles *QPFiles, err error) {
 	mapFileName := storage.GetMapFileName(name)
 
-	lpFiles = &LPFiles{mapFileName: mapFileName}
+	qpFiles = &QPFiles{mapFileName: mapFileName}
 
-	header, err := lpFiles.openHashMapFile()
+	header, err := qpFiles.openHashMapFile()
 	if err != nil {
 		return
 	}
 
 	// Check for mismatch in choice of hash algorithm
 	if header.InternalHash && hashAlgorithm != nil {
-		lpFiles.CloseFiles()
+		qpFiles.CloseFiles()
 		err = fmt.Errorf("seems the hash map file was used with the internal hash algorithm but an external was given")
 		return
 	}
 	if !header.InternalHash && hashAlgorithm == nil {
-		lpFiles.CloseFiles()
+		qpFiles.CloseFiles()
 		err = fmt.Errorf("seems the hash map file was used with the external hash algorithm but no external was given")
 		return
 	}
@@ -110,44 +125,58 @@ func NewLPFilesFromExistingFiles(name string, hashAlgorithm hashfunc.HashAlgorit
 	// If no HashAlgorithm was given then use the default internal
 	var internalAlg bool
 	if hashAlgorithm == nil {
-		hashAlgorithm = hash.NewSingleHashAlgorithm(header.NumberOfBucketsAvailable)
+		hashAlgorithm = hash.NewSingleHashAlgorithm(header.NumberOfBucketsNeeded)
 		internalAlg = true
 	}
 
-	lpFiles.keyLength = header.KeyLength
-	lpFiles.valueLength = header.ValueLength
-	lpFiles.numberOfBucketsNeeded = header.NumberOfBucketsNeeded
-	lpFiles.numberOfBucketsAvailable = header.NumberOfBucketsAvailable
-	lpFiles.maxBucketNo = header.MaxBucketNo
-	lpFiles.mapFileSize = header.FileSize
-	lpFiles.hashAlgorithm = hashAlgorithm
-	lpFiles.internalAlgorithm = internalAlg
-	lpFiles.nEmpty = header.NumberOfEmptyRecords
-	lpFiles.nOccupied = header.NumberOfOccupiedRecords
-	lpFiles.nDeleted = header.NumberOfDeletedRecords
+	// Add one extra bucket to be the golden bucket never to be occupied to assist the Quadratic Probing algorithm
+	hashAlgorithm.UpdateTableSize(1)
+
+	// Calculate the round up number of buckets to the closest power of 2, will be used in Quadratic Probing
+	r := uint64(header.NumberOfBucketsAvailable - 1)
+	r |= r >> 1
+	r |= r >> 2
+	r |= r >> 4
+	r |= r >> 8
+	r |= r >> 16
+	r |= r >> 32
+	roundUp2 := int64(r + 1)
+
+	qpFiles.keyLength = header.KeyLength
+	qpFiles.valueLength = header.ValueLength
+	qpFiles.numberOfBucketsNeeded = header.NumberOfBucketsNeeded
+	qpFiles.numberOfBucketsAvailable = header.NumberOfBucketsAvailable
+	qpFiles.maxBucketNo = header.MaxBucketNo
+	qpFiles.mapFileSize = header.FileSize
+	qpFiles.hashAlgorithm = hashAlgorithm
+	qpFiles.internalAlgorithm = internalAlg
+	qpFiles.roundUp2 = roundUp2
+	qpFiles.nEmpty = header.NumberOfEmptyRecords
+	qpFiles.nOccupied = header.NumberOfOccupiedRecords
+	qpFiles.nDeleted = header.NumberOfDeletedRecords
 
 	return
 }
 
 // CloseFiles - Closes the map files
-func (L *LPFiles) CloseFiles() {
-	if L.mapFile != nil {
-		header := L.createHeader()
-		err := storage.SetHeader(L.mapFile, header)
+func (Q *QPFiles) CloseFiles() {
+	if Q.mapFile != nil {
+		header := Q.createHeader()
+		err := storage.SetHeader(Q.mapFile, header)
 		if err == nil {
-			_ = storage.SetFileCloseDate(L.mapFile, false)
+			_ = storage.SetFileCloseDate(Q.mapFile, false)
 		}
-		_ = L.mapFile.Sync()
-		_ = L.mapFile.Close()
+		_ = Q.mapFile.Sync()
+		_ = Q.mapFile.Close()
 	}
 }
 
 // RemoveFiles - Removes the map files, make sure to close them first before calling this function
-func (L *LPFiles) RemoveFiles() (err error) {
+func (Q *QPFiles) RemoveFiles() (err error) {
 	// Only try to remove if exists, and are not by accident directories (could happen when testing things out)
-	if stat, ok := os.Stat(L.mapFileName); ok == nil {
+	if stat, ok := os.Stat(Q.mapFileName); ok == nil {
 		if !stat.IsDir() {
-			err = os.Remove(L.mapFileName)
+			err = os.Remove(Q.mapFileName)
 			if err != nil {
 				err = fmt.Errorf("error while removing map file: %s", err)
 				return
@@ -159,15 +188,15 @@ func (L *LPFiles) RemoveFiles() (err error) {
 }
 
 // GetStorageParameters - Returns a struct with storage parameters from SCFiles
-func (L *LPFiles) GetStorageParameters() (params model.StorageParameters) {
+func (Q *QPFiles) GetStorageParameters() (params model.StorageParameters) {
 	params = model.StorageParameters{
-		CollisionResolutionTechnique: crt.LinearProbing,
-		KeyLength:                    L.keyLength,
-		ValueLength:                  L.valueLength,
-		NumberOfBucketsNeeded:        L.numberOfBucketsNeeded,
-		NumberOfBucketsAvailable:     L.numberOfBucketsAvailable,
-		MapFileSize:                  L.mapFileSize,
-		InternalAlgorithm:            L.internalAlgorithm,
+		CollisionResolutionTechnique: crt.QuadraticProbing,
+		KeyLength:                    Q.keyLength,
+		ValueLength:                  Q.valueLength,
+		NumberOfBucketsNeeded:        Q.numberOfBucketsNeeded,
+		NumberOfBucketsAvailable:     Q.numberOfBucketsAvailable,
+		MapFileSize:                  Q.mapFileSize,
+		InternalAlgorithm:            Q.internalAlgorithm,
 	}
 
 	return
@@ -180,9 +209,9 @@ func (L *LPFiles) GetStorageParameters() (params model.StorageParameters) {
 //   - bucket is a model.Bucket struct containing all records in the map file
 //   - overflowIterator is a OverflowRecords struct that can be used to get any overflow records belonging to the bucket. This will always be nil in Linear Probing.
 //   - err is standard error
-func (L *LPFiles) GetBucket(bucketNo int64) (bucket model.Bucket, overflowIterator *overflow.Records, err error) {
+func (Q *QPFiles) GetBucket(bucketNo int64) (bucket model.Bucket, overflowIterator *overflow.Records, err error) {
 	// Get current contents from within the bucket
-	bucket, err = L.getBucketRecord(bucketNo)
+	bucket, err = Q.getBucketRecord(bucketNo)
 	if err != nil {
 		err = fmt.Errorf("error while getting existing bucket records from hash map file: %s", err)
 		return
@@ -199,21 +228,21 @@ func (L *LPFiles) GetBucket(bucketNo int64) (bucket model.Bucket, overflowIterat
 // It returns:
 //   - record is the value of the matching record if found, if not found an error of type crt.NoRecordFound is also returned.
 //   - err is either of type crt.NoRecordFound or a standard error, if something went wrong
-func (L *LPFiles) Get(keyRecord model.Record) (record model.Record, err error) {
+func (Q *QPFiles) Get(keyRecord model.Record) (record model.Record, err error) {
 	// Check validity of the key
-	if int64(len(keyRecord.Key)) != L.keyLength {
-		err = fmt.Errorf("wrong length of key, should be %d", L.keyLength)
+	if int64(len(keyRecord.Key)) != Q.keyLength {
+		err = fmt.Errorf("wrong length of key, should be %d", Q.keyLength)
 		return
 	}
 
 	// Get current contents from within the bucket
-	bucketNo, err := L.getBucketNo(keyRecord.Key)
+	bucketNo, err := Q.getBucketNo(keyRecord.Key)
 	if err != nil {
 		return
 	}
 
 	// Tro to find the key in the file
-	record, err = L.linearProbingForGet(bucketNo, keyRecord.Key)
+	record, err = Q.quadraticProbingForGet(bucketNo, keyRecord.Key)
 
 	return
 }
@@ -223,25 +252,25 @@ func (L *LPFiles) Get(keyRecord model.Record) (record model.Record, err error) {
 //
 // It returns:
 //   - err is a standard error, if something went wrong
-func (L *LPFiles) Set(record model.Record) (err error) {
+func (Q *QPFiles) Set(record model.Record) (err error) {
 	// Check validity of the key
-	if int64(len(record.Key)) != L.keyLength {
-		err = fmt.Errorf("wrong length of key, should be %d", L.keyLength)
+	if int64(len(record.Key)) != Q.keyLength {
+		err = fmt.Errorf("wrong length of key, should be %d", Q.keyLength)
 		return
 	}
 	// Check validity of the value
-	if int64(len(record.Value)) != L.valueLength {
-		err = fmt.Errorf("wrong length of value, should be %d", L.valueLength)
+	if int64(len(record.Value)) != Q.valueLength {
+		err = fmt.Errorf("wrong length of value, should be %d", Q.valueLength)
 		return
 	}
 
 	// Get current contents from within the bucket
-	bucketNo, err := L.getBucketNo(record.Key)
+	bucketNo, err := Q.getBucketNo(record.Key)
 	if err != nil {
 		return
 	}
 
-	selectedRecord, err := L.linearProbingForSet(bucketNo, record.Key)
+	selectedRecord, err := Q.quadraticProbingForSet(bucketNo, record.Key)
 	if err != nil {
 		return
 	}
@@ -251,12 +280,13 @@ func (L *LPFiles) Set(record model.Record) (err error) {
 	selectedRecord.Key = record.Key
 	selectedRecord.Value = record.Value
 
-	err = L.setBucketRecord(selectedRecord)
+	err = Q.setBucketRecord(selectedRecord)
 	if err != nil {
 		err = fmt.Errorf("error while updating or adding record to bucket: %s", err)
-	} else {
-		L.updateUtilizationInfo(fromState, selectedRecord.State)
+		return
 	}
+
+	Q.updateUtilizationInfo(fromState, selectedRecord.State)
 
 	return
 }
@@ -266,17 +296,17 @@ func (L *LPFiles) Set(record model.Record) (err error) {
 //
 // It returns:
 //   - err is a standard error, if something went wrong
-func (L *LPFiles) Delete(record model.Record) (err error) {
+func (Q *QPFiles) Delete(record model.Record) (err error) {
 	fromState := record.State
 	record.State = model.RecordDeleted
-	record.Key = make([]byte, L.keyLength)
-	record.Value = make([]byte, L.valueLength)
+	record.Key = make([]byte, Q.keyLength)
+	record.Value = make([]byte, Q.valueLength)
 
-	err = L.setBucketRecord(record)
+	err = Q.setBucketRecord(record)
 	if err != nil {
 		err = fmt.Errorf("error while updating record in bucket: %s", err)
 	} else {
-		L.updateUtilizationInfo(fromState, record.State)
+		Q.updateUtilizationInfo(fromState, record.State)
 	}
 
 	return

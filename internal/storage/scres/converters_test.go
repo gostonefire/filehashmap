@@ -26,7 +26,7 @@ func TestBytesToBucket(t *testing.T) {
 		assert.Equal(t, model.RecordOccupied, bucket.Record.State)
 		assert.Equal(t, 1000+bucketHeaderLength, bucket.Record.RecordAddress)
 
-		keyStart := bucketHeaderLength + stateBytes
+		keyStart := bucketHeaderLength + 1
 		keyEnd := keyStart + 16
 		valueStart := keyEnd
 		valueEnd := valueStart + 10
@@ -51,7 +51,7 @@ func TestOverflowBytesToRecord(t *testing.T) {
 		assert.True(t, record.IsOverflow)
 		assert.Equal(t, int64(1), record.NextOverflow)
 
-		keyStart := overflowAddressLength + stateBytes
+		keyStart := overflowAddressLength + 1
 		keyEnd := keyStart + 16
 		valueStart := keyEnd
 		valueEnd := valueStart + 10
@@ -77,7 +77,7 @@ func TestRecordToOverflowBytes(t *testing.T) {
 		assert.Equal(t, model.RecordOccupied, buf2[overflowAddressLength])
 		assert.Equal(t, uint64(2000), binary.LittleEndian.Uint64(buf2))
 
-		keyStart := overflowAddressLength + stateBytes
+		keyStart := overflowAddressLength + 1
 		keyEnd := keyStart + 16
 		valueStart := keyEnd
 		valueEnd := valueStart + 10

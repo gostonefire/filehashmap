@@ -8,6 +8,7 @@ import (
 	"github.com/gostonefire/filehashmap/internal/overflow"
 	"github.com/gostonefire/filehashmap/internal/storage"
 	"github.com/gostonefire/filehashmap/internal/storage/lpres"
+	"github.com/gostonefire/filehashmap/internal/storage/qpres"
 	"github.com/gostonefire/filehashmap/internal/storage/scres"
 	"github.com/gostonefire/filehashmap/internal/utils"
 )
@@ -131,7 +132,7 @@ func NewFileHashMap(
 	case crt.LinearProbing:
 		fm, err = lpres.NewLPFiles(crtConf)
 	case crt.QuadraticProbing:
-		err = fmt.Errorf("QuadraticProbing not yet implemented")
+		fm, err = qpres.NewQPFiles(crtConf)
 	case crt.DoubleHashing:
 		err = fmt.Errorf("DoubleHashing not yet implemented")
 	default:
@@ -192,7 +193,7 @@ func NewFromExistingFiles(name string, hashAlgorithm hashfunc.HashAlgorithm) (
 	case crt.LinearProbing:
 		fm, err = lpres.NewLPFilesFromExistingFiles(name, hashAlgorithm)
 	case crt.QuadraticProbing:
-		err = fmt.Errorf("QuadraticProbing not yet implemented")
+		fm, err = qpres.NewQPFilesFromExistingFiles(name, hashAlgorithm)
 	case crt.DoubleHashing:
 		err = fmt.Errorf("DoubleHashing not yet implemented")
 	default:
