@@ -175,8 +175,10 @@ func TestStress(t *testing.T) {
 	t.Run("stress tests for all CRTs", func(t *testing.T) {
 		// Prepare
 		tests := []TestCaseStressTest{
-			{crtName: "OpenChaining", buckets: 1000000, keyLength: 20, valueLength: 10, crt: crt.OpenChaining, nTestdata: 1000000},
-			{crtName: "LinearProbing", buckets: 200000, keyLength: 20, valueLength: 10, crt: crt.LinearProbing, nTestdata: 100000},
+			{crtName: "SeparateChaining", buckets: 1000000, keyLength: 20, valueLength: 10, crt: crt.SeparateChaining, nTestdata: 1000000},
+			{crtName: "LinearProbing", buckets: 266666, keyLength: 20, valueLength: 10, crt: crt.LinearProbing, nTestdata: 100000},
+			{crtName: "QuadraticProbing", buckets: 266666, keyLength: 20, valueLength: 10, crt: crt.QuadraticProbing, nTestdata: 100000},
+			{crtName: "DoubleHashing", buckets: 266666, keyLength: 20, valueLength: 10, crt: crt.DoubleHashing, nTestdata: 100000},
 		}
 
 		for _, test := range tests {
@@ -236,7 +238,7 @@ func TestStress(t *testing.T) {
 				assert.NoError(t, err, "get stat 1")
 
 				assert.Equal(t, test.nTestdata, stat1.Records, "correct number of records, pre-reorg")
-				if test.crt == crt.OpenChaining {
+				if test.crt == crt.SeparateChaining {
 					assert.Equal(t, 491659, stat1.MapFileRecords, "correct number of map file records, pre-reorg")
 					assert.Equal(t, 508341, stat1.OverflowRecords, "correct number of overflow file records, pre-reorg")
 				} else {
@@ -260,7 +262,7 @@ func TestStress(t *testing.T) {
 				assert.NoError(t, err, "get stat 2")
 
 				assert.Equal(t, test.nTestdata, stat2.Records, "correct number of records, post-reorg")
-				if test.crt == crt.OpenChaining {
+				if test.crt == crt.SeparateChaining {
 					assert.Equal(t, 643855, stat2.MapFileRecords, "correct number of map file records, post-reorg")
 					assert.Equal(t, 356145, stat2.OverflowRecords, "correct number of overflow file records, post-reorg")
 				} else {

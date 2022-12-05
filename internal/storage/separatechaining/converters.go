@@ -1,4 +1,4 @@
-package scres
+package separatechaining
 
 import (
 	"encoding/binary"

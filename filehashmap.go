@@ -3,13 +3,12 @@ package filehashmap
 import (
 	"fmt"
 	"github.com/gostonefire/filehashmap/crt"
-	"github.com/gostonefire/filehashmap/interfaces"
+	"github.com/gostonefire/filehashmap/hashfunc"
 	"github.com/gostonefire/filehashmap/internal/model"
 	"github.com/gostonefire/filehashmap/internal/overflow"
 	"github.com/gostonefire/filehashmap/internal/storage"
-	"github.com/gostonefire/filehashmap/internal/storage/lpres"
-	"github.com/gostonefire/filehashmap/internal/storage/qpres"
-	"github.com/gostonefire/filehashmap/internal/storage/scres"
+	"github.com/gostonefire/filehashmap/internal/storage/openaddressing"
+	"github.com/gostonefire/filehashmap/internal/storage/separatechaining"
 	"github.com/gostonefire/filehashmap/internal/utils"
 )
 
@@ -66,7 +65,7 @@ type FileHashMap struct {
 //   - bucketsNeeded is the max number of buckets needed, but depending on hash algorithm it may result in a different number of actual available buckets.
 //   - keyLength is the length of the key part in a record
 //   - valueLength is the length of the value part in a record
-//   - hashAlgorithm is an optional entry to provide a custom hash algorithm following the HashAlgorithm interfaces.
+//   - hashAlgorithm is an optional entry to provide a custom hash algorithm following the HashAlgorithm hashfunc.
 //
 // It returns:
 //   - fileHashMap is a pointer to a FileHashMap struct
@@ -87,7 +86,7 @@ func NewFileHashMap(
 
 	// Check choice of Collision Resolution Technique
 	if crtType < 1 || crtType > 4 {
-		err = fmt.Errorf("crtType has to be one of OpenChaining, LinearProbing, QuadraticProbing or DoubleHashing")
+		err = fmt.Errorf("crtType has to be one of SeparateChaining, LinearProbing, QuadraticProbing or DoubleHashing")
 		return
 	}
 
@@ -118,25 +117,19 @@ func NewFileHashMap(
 	}
 
 	crtConf := model.CRTConf{
-		Name:                  name,
-		NumberOfBucketsNeeded: int64(bucketsNeeded),
-		KeyLength:             int64(keyLength),
-		ValueLength:           int64(valueLength),
-		HashAlgorithm:         hashAlgorithm,
+		Name:                         name,
+		NumberOfBucketsNeeded:        int64(bucketsNeeded),
+		KeyLength:                    int64(keyLength),
+		ValueLength:                  int64(valueLength),
+		CollisionResolutionTechnique: crtType,
+		HashAlgorithm:                hashAlgorithm,
 	}
 
 	var fm FileManagement
-	switch crtType {
-	case crt.OpenChaining:
-		fm, err = scres.NewSCFiles(crtConf)
-	case crt.LinearProbing:
-		fm, err = lpres.NewLPFiles(crtConf)
-	case crt.QuadraticProbing:
-		fm, err = qpres.NewQPFiles(crtConf)
-	case crt.DoubleHashing:
-		err = fmt.Errorf("DoubleHashing not yet implemented")
-	default:
-		err = fmt.Errorf("crtType %d unknown", crtType)
+	if crtType == crt.SeparateChaining {
+		fm, err = separatechaining.NewSCFiles(crtConf)
+	} else {
+		fm, err = openaddressing.NewOAFiles(crtConf)
 	}
 	if err != nil {
 		if fm != nil {
@@ -187,17 +180,10 @@ func NewFromExistingFiles(name string, hashAlgorithm hashfunc.HashAlgorithm) (
 	}
 
 	var fm FileManagement
-	switch int(header.CollisionResolutionTechnique) {
-	case crt.OpenChaining:
-		fm, err = scres.NewSCFilesFromExistingFiles(name, hashAlgorithm)
-	case crt.LinearProbing:
-		fm, err = lpres.NewLPFilesFromExistingFiles(name, hashAlgorithm)
-	case crt.QuadraticProbing:
-		fm, err = qpres.NewQPFilesFromExistingFiles(name, hashAlgorithm)
-	case crt.DoubleHashing:
-		err = fmt.Errorf("DoubleHashing not yet implemented")
-	default:
-		err = fmt.Errorf("crtType %d unknown", header.CollisionResolutionTechnique)
+	if header.CollisionResolutionTechnique == int64(crt.SeparateChaining) {
+		fm, err = separatechaining.NewSCFilesFromExistingFiles(name, hashAlgorithm)
+	} else {
+		fm, err = openaddressing.NewOAFilesFromExistingFiles(name, hashAlgorithm)
 	}
 	if err != nil {
 		return
@@ -227,7 +213,7 @@ func NewFromExistingFiles(name string, hashAlgorithm hashfunc.HashAlgorithm) (
 
 // ReorgConf - Is a struct used in the call to ReorgFiles holding configuration for the new file structure.
 //   - CollisionResolutionTechnique is the new CRT to use
-//   - NumberOfBucketsNeeded is the new estimated number of buckets needed store in the hash map files
+//   - NumberOfBucketsNeeded is the new estimated number of buckets needed to store in the hash map files
 //   - KeyExtension is number of bytes to extend the key with
 //   - PrependKeyExtension whether to prepend the extra space or append it
 //   - ValueExtension is number of bytes to extend the value with

@@ -1,9 +1,9 @@
-package scres
+package separatechaining
 
 import (
 	"fmt"
 	"github.com/gostonefire/filehashmap/crt"
-	hashfunc "github.com/gostonefire/filehashmap/interfaces"
+	hashfunc "github.com/gostonefire/filehashmap/hashfunc"
 	"github.com/gostonefire/filehashmap/internal/hash"
 	"github.com/gostonefire/filehashmap/internal/model"
 	"github.com/gostonefire/filehashmap/internal/overflow"
@@ -45,13 +45,15 @@ func NewSCFiles(crtConf model.CRTConf) (scFiles *SCFiles, err error) {
 	// If no HashAlgorithm was given then use the default internal
 	var internalAlg bool
 	if crtConf.HashAlgorithm == nil {
-		crtConf.HashAlgorithm = hash.NewSingleHashAlgorithm(crtConf.NumberOfBucketsNeeded)
+		crtConf.HashAlgorithm = hash.NewSeparateChainingHashAlgorithm(crtConf.NumberOfBucketsNeeded)
 		internalAlg = true
+	} else {
+		crtConf.HashAlgorithm.SetTableSize(crtConf.NumberOfBucketsNeeded)
 	}
 
 	// Calculate the hash map file various parameters
 	bucketLength := bucketHeaderLength + 1 + crtConf.KeyLength + crtConf.ValueLength // First byte is record state
-	maxBucketNo := crtConf.HashAlgorithm.HashFunc1MaxValue()
+	maxBucketNo := crtConf.HashAlgorithm.GetTableSize() - 1
 	numberOfBuckets := maxBucketNo + 1
 	fileSize := bucketLength*numberOfBuckets + storage.MapFileHeaderLength
 
@@ -123,8 +125,10 @@ func NewSCFilesFromExistingFiles(name string, hashAlgorithm hashfunc.HashAlgorit
 	// If no HashAlgorithm was given then use the default internal
 	var internalAlg bool
 	if hashAlgorithm == nil {
-		hashAlgorithm = hash.NewSingleHashAlgorithm(header.NumberOfBucketsNeeded)
+		hashAlgorithm = hash.NewSeparateChainingHashAlgorithm(header.NumberOfBucketsNeeded)
 		internalAlg = true
+	} else {
+		hashAlgorithm.SetTableSize(header.NumberOfBucketsNeeded)
 	}
 
 	//scFiles.initialUniqueKeys = header.NumberOfBucketsNeeded
@@ -189,7 +193,7 @@ func (S *SCFiles) RemoveFiles() (err error) {
 // GetStorageParameters - Returns a struct with storage parameters from SCFiles
 func (S *SCFiles) GetStorageParameters() (params model.StorageParameters) {
 	params = model.StorageParameters{
-		CollisionResolutionTechnique: crt.OpenChaining,
+		CollisionResolutionTechnique: crt.SeparateChaining,
 		KeyLength:                    S.keyLength,
 		ValueLength:                  S.valueLength,
 		NumberOfBucketsNeeded:        S.numberOfBucketsNeeded,

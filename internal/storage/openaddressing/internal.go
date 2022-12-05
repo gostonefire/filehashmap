@@ -1,4 +1,4 @@
-package qpres
+package openaddressing
 
 import (
 	"fmt"
@@ -13,7 +13,7 @@ import (
 // createNewHashMapFile - Creates a new hash map file and writes Header data to it.
 // If it already exists it will first be truncated to zero length and then to expected length,
 // hence deleting all existing data.
-func (Q *QPFiles) createNewHashMapFile(header storage.Header) (err error) {
+func (Q *OAFiles) createNewHashMapFile(header storage.Header) (err error) {
 	Q.mapFile, err = os.OpenFile(Q.mapFileName, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0644)
 	if err != nil {
 		err = fmt.Errorf("error while open/create new map file: %s", err)
@@ -38,7 +38,7 @@ func (Q *QPFiles) createNewHashMapFile(header storage.Header) (err error) {
 
 // openHashMapFile - Opens the hash map file and does some rudimentary checks of its validity and
 // returns a Header struct read from file
-func (Q *QPFiles) openHashMapFile() (header storage.Header, err error) {
+func (Q *OAFiles) openHashMapFile() (header storage.Header, err error) {
 	if stat, ok := os.Stat(Q.mapFileName); ok == nil {
 		Q.mapFile, err = os.OpenFile(Q.mapFileName, os.O_RDWR, 0644)
 		if err != nil {
@@ -88,7 +88,7 @@ func (Q *QPFiles) openHashMapFile() (header storage.Header, err error) {
 }
 
 // getBucketRecord - Returns record for a given bucket number in a model.Bucket struct
-func (Q *QPFiles) getBucketRecord(bucketNo int64) (bucket model.Bucket, err error) {
+func (Q *OAFiles) getBucketRecord(bucketNo int64) (bucket model.Bucket, err error) {
 	trueRecordLength := 1 + Q.keyLength + Q.valueLength // First byte is record state
 	bucketAddress := storage.MapFileHeaderLength + bucketNo*trueRecordLength
 
@@ -108,19 +108,8 @@ func (Q *QPFiles) getBucketRecord(bucketNo int64) (bucket model.Bucket, err erro
 	return
 }
 
-// getBucketNo - Returns which bucket number that the given key results in
-func (Q *QPFiles) getBucketNo(key []byte) (bucketNo int64, err error) {
-	bucketNo = Q.hashAlgorithm.HashFunc1(key)
-	if bucketNo < 0 || bucketNo >= Q.numberOfBucketsAvailable {
-		err = fmt.Errorf("recieved bucket number from bucket algorithm is outside permitted range")
-		return
-	}
-
-	return
-}
-
 // setBucketRecord - Sets a bucket record in the hash map file
-func (Q *QPFiles) setBucketRecord(record model.Record) (err error) {
+func (Q *OAFiles) setBucketRecord(record model.Record) (err error) {
 	buf := make([]byte, 1, 1+Q.keyLength+Q.valueLength) // First byte is record state
 	buf[0] = record.State
 
@@ -138,7 +127,7 @@ func (Q *QPFiles) setBucketRecord(record model.Record) (err error) {
 }
 
 // bytesToBucket - Converts bucket raw data to a Bucket struct
-func (Q *QPFiles) bytesToBucket(buf []byte, bucketAddress int64) (bucket model.Bucket, err error) {
+func (Q *OAFiles) bytesToBucket(buf []byte, bucketAddress int64) (bucket model.Bucket, err error) {
 	keyStart := int64(1) // First byte is record state
 	valueStart := keyStart + Q.keyLength
 
@@ -163,7 +152,7 @@ func (Q *QPFiles) bytesToBucket(buf []byte, bucketAddress int64) (bucket model.B
 }
 
 // createHeader - Creates a header instance
-func (Q *QPFiles) createHeader() (header storage.Header) {
+func (Q *OAFiles) createHeader() (header storage.Header) {
 	header = storage.Header{
 		InternalHash:                 Q.internalAlgorithm,
 		KeyLength:                    Q.keyLength,
@@ -172,7 +161,7 @@ func (Q *QPFiles) createHeader() (header storage.Header) {
 		NumberOfBucketsAvailable:     Q.numberOfBucketsAvailable,
 		MaxBucketNo:                  Q.maxBucketNo,
 		FileSize:                     Q.mapFileSize,
-		CollisionResolutionTechnique: int64(crt.QuadraticProbing),
+		CollisionResolutionTechnique: int64(Q.CollisionResolutionTechnique),
 		NumberOfEmptyRecords:         Q.nEmpty,
 		NumberOfOccupiedRecords:      Q.nOccupied,
 		NumberOfDeletedRecords:       Q.nDeleted,
@@ -182,7 +171,7 @@ func (Q *QPFiles) createHeader() (header storage.Header) {
 }
 
 // updateUtilizationInfo - Updates information about current utilization
-func (Q *QPFiles) updateUtilizationInfo(fromState, toState uint8) {
+func (Q *OAFiles) updateUtilizationInfo(fromState, toState uint8) {
 	if fromState != toState {
 		switch fromState {
 		case model.RecordEmpty:
@@ -204,16 +193,19 @@ func (Q *QPFiles) updateUtilizationInfo(fromState, toState uint8) {
 	}
 }
 
-// quadraticProbingForGet - Is the Quadratic Probing Collision Resolution Technique algorithm for getting a record.
-func (Q *QPFiles) quadraticProbingForGet(bucketNo int64, key []byte) (record model.Record, err error) {
-	// Loop through at most the entire set of buckets
+// probingForGet - Is the Probing Collision Resolution Technique algorithm for getting a record.
+func (Q *OAFiles) probingForGet(key []byte) (record model.Record, err error) {
 	var bucket model.Bucket
-	var probe int64
-	iMax := Q.numberOfBucketsAvailable * 10
+	var probe, n int64
+
+	hf1Value := Q.hashAlgorithm.HashFunc1(key)
+	hf2Value := Q.hashAlgorithm.HashFunc2(key)
+
+	iMax := Q.numberOfBucketsAvailable * 10 // To avoid infinite loop if hash algorithm is behaving bad
 
 	for i := int64(0); i < iMax; i++ {
-		probe = (bucketNo + ((i*i + i) / 2)) % Q.roundUp2
-		if probe < Q.numberOfBucketsAvailable {
+		probe = Q.hashAlgorithm.ProbeIteration(hf1Value, hf2Value, i)
+		if probe < Q.numberOfBucketsAvailable && probe >= 0 {
 			bucket, err = Q.getBucketRecord(probe)
 			if err != nil {
 				err = fmt.Errorf("error while reading bucket from file: %s", err)
@@ -232,6 +224,14 @@ func (Q *QPFiles) quadraticProbingForGet(bucketNo int64, key []byte) (record mod
 					return
 				}
 			}
+
+			// Relies on the underlying probing function to distinctively go through the entire set of buckets
+			n++
+			if n >= Q.numberOfBucketsAvailable {
+				record = model.Record{}
+				err = crt.NoRecordFound{}
+				return
+			}
 		}
 	}
 
@@ -242,18 +242,21 @@ func (Q *QPFiles) quadraticProbingForGet(bucketNo int64, key []byte) (record mod
 	return
 }
 
-// quadraticProbingForSet - Is the Quadratic Probing Collision Resolution Technique algorithm for getting a record for set.
-func (Q *QPFiles) quadraticProbingForSet(bucketNo int64, key []byte) (record model.Record, err error) {
-	// Loop through at most the entire set of buckets
+// probingForSet - Is the Probing Collision Resolution Technique algorithm for getting a record for set.
+func (Q *OAFiles) probingForSet(key []byte) (record model.Record, err error) {
 	var bucket model.Bucket
 	var deletedRecord model.Record
-	var hasCached, isSeekDeletedRecord bool
-	var probe int64
-	iMax := Q.numberOfBucketsAvailable * 10
+	var hasCached bool
+	var probe, n int64
+
+	hf1Value := Q.hashAlgorithm.HashFunc1(key)
+	hf2Value := Q.hashAlgorithm.HashFunc2(key)
+
+	iMax := Q.numberOfBucketsAvailable * 10 // To avoid infinite loop if hash algorithm is behaving bad
 
 	for i := int64(0); i < iMax; i++ {
-		probe = (bucketNo + ((i*i + i) / 2)) % Q.roundUp2
-		if probe < Q.numberOfBucketsAvailable {
+		probe = Q.hashAlgorithm.ProbeIteration(hf1Value, hf2Value, i)
+		if probe < Q.numberOfBucketsAvailable && probe >= 0 {
 			bucket, err = Q.getBucketRecord(probe)
 			if err != nil {
 				err = fmt.Errorf("error while reading bucket from file: %s", err)
@@ -262,37 +265,32 @@ func (Q *QPFiles) quadraticProbingForSet(bucketNo int64, key []byte) (record mod
 
 			switch bucket.Record.State {
 			case model.RecordEmpty:
-				if !isSeekDeletedRecord {
-					if hasCached {
-						record = deletedRecord
-						return
-					}
-					if Q.nEmpty > 1 {
-						record = bucket.Record
-						return
-					}
-					if Q.nDeleted == 0 {
-						err = crt.MapFileFull{}
-						return
-					}
-					isSeekDeletedRecord = true
+				if hasCached {
+					record = deletedRecord
+					return
+				} else {
+					record = bucket.Record
 				}
+				return
 
 			case model.RecordOccupied:
-				if !isSeekDeletedRecord && utils.IsEqual(key, bucket.Record.Key) {
+				if utils.IsEqual(key, bucket.Record.Key) {
 					record = bucket.Record
 					return
 				}
 
 			case model.RecordDeleted:
-				if isSeekDeletedRecord {
-					record = bucket.Record
-					return
-				}
 				if !hasCached {
 					deletedRecord = bucket.Record
 					hasCached = true
 				}
+			}
+
+			// Relies on the underlying probing function to distinctively go through the entire set of buckets
+			n++
+			if n >= Q.numberOfBucketsAvailable {
+				err = crt.MapFileFull{}
+				return
 			}
 		}
 	}

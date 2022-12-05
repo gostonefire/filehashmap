@@ -1,4 +1,4 @@
-package scres
+package separatechaining
 
 import (
 	"encoding/binary"
@@ -279,7 +279,7 @@ func (S *SCFiles) createHeader() (header storage.Header) {
 		NumberOfBucketsAvailable:     S.numberOfBucketsAvailable,
 		MaxBucketNo:                  S.maxBucketNo,
 		FileSize:                     S.mapFileSize,
-		CollisionResolutionTechnique: int64(crt.OpenChaining),
+		CollisionResolutionTechnique: int64(crt.SeparateChaining),
 		NumberOfEmptyRecords:         S.nEmpty,
 		NumberOfOccupiedRecords:      S.nOccupied,
 		NumberOfDeletedRecords:       S.nDeleted,

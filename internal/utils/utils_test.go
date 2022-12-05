@@ -90,3 +90,17 @@ func TestExtendByteSlice(t *testing.T) {
 		}
 	})
 }
+
+func TestRoundUp2(t *testing.T) {
+	t.Run("bytes are prepended to byte slice", func(t *testing.T) {
+		// Prepare
+		r2u := []int64{4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 262144, 16777216, 1073741824}
+		input := []int64{3, 5, 9, 30, 50, 100, 129, 512, 1020, 1500, 3000, 7123, 9000, 200000, 16000000, 536870913}
+
+		// Execute and Check
+		for i := 0; i < len(input); i++ {
+			r := RoundUp2(input[i])
+			assert.Equal(t, r2u[i], r, "rounds upp correct")
+		}
+	})
+}

@@ -1,6 +1,6 @@
 package model
 
-import hashfunc "github.com/gostonefire/filehashmap/interfaces"
+import hashfunc "github.com/gostonefire/filehashmap/hashfunc"
 
 // RecordEmpty - State indicating a record that is or has never been in use
 const RecordEmpty uint8 = 0
@@ -48,9 +48,10 @@ type StorageParameters struct {
 //   - ValueLength is the fixed length of values to store
 //   - HashAlgorithm is the hash function(s) to use
 type CRTConf struct {
-	Name                  string
-	NumberOfBucketsNeeded int64
-	KeyLength             int64
-	ValueLength           int64
-	HashAlgorithm         hashfunc.HashAlgorithm
+	Name                         string
+	NumberOfBucketsNeeded        int64
+	KeyLength                    int64
+	ValueLength                  int64
+	CollisionResolutionTechnique int
+	HashAlgorithm                hashfunc.HashAlgorithm
 }

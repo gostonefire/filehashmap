@@ -29,7 +29,7 @@ func TestNewFileHashMap(t *testing.T) {
 	t.Run("NewFileHashMap tests for all CRTs", func(t *testing.T) {
 		// Prepare
 		tests := []TestCaseFileHashMap{
-			{crtToName: "OpenChaining", toBuckets: 100000, keyLength: 16, valueLength: 10, toCrt: crt.OpenChaining},
+			{crtToName: "SeparateChaining", toBuckets: 100000, keyLength: 16, valueLength: 10, toCrt: crt.SeparateChaining},
 			{crtToName: "LinearProbing", toBuckets: 100000, keyLength: 16, valueLength: 10, toCrt: crt.LinearProbing},
 			{crtToName: "QuadraticProbing", toBuckets: 100000, keyLength: 16, valueLength: 10, toCrt: crt.QuadraticProbing},
 		}
@@ -83,7 +83,7 @@ func TestNewFileHashMap(t *testing.T) {
 
 	t.Run("error when supplying an invalid key length", func(t *testing.T) {
 		// Execute
-		_, _, err := NewFileHashMap(testHashMap, crt.OpenChaining, 10, -2, 10, nil)
+		_, _, err := NewFileHashMap(testHashMap, crt.SeparateChaining, 10, -2, 10, nil)
 
 		// Check
 		assert.Error(t, err)
@@ -91,7 +91,7 @@ func TestNewFileHashMap(t *testing.T) {
 
 	t.Run("error when supplying an invalid value length", func(t *testing.T) {
 		// Execute
-		_, _, err := NewFileHashMap(testHashMap, crt.OpenChaining, 10, 16, 0, nil)
+		_, _, err := NewFileHashMap(testHashMap, crt.SeparateChaining, 10, 16, 0, nil)
 
 		// Check
 		assert.Error(t, err)
@@ -99,7 +99,7 @@ func TestNewFileHashMap(t *testing.T) {
 
 	t.Run("error when supplying an invalid name", func(t *testing.T) {
 		// Execute
-		_, _, err := NewFileHashMap("", crt.OpenChaining, 10, 16, 10, nil)
+		_, _, err := NewFileHashMap("", crt.SeparateChaining, 10, 16, 10, nil)
 
 		// Check
 		assert.Error(t, err)
@@ -110,7 +110,7 @@ func TestNewFromExistingFiles(t *testing.T) {
 	t.Run("NewFromExistingFiles tests for all CRTs", func(t *testing.T) {
 		// Prepare
 		tests := []TestCaseFileHashMap{
-			{crtToName: "OpenChaining", toBuckets: 100000, keyLength: 16, valueLength: 10, toCrt: crt.OpenChaining},
+			{crtToName: "SeparateChaining", toBuckets: 100000, keyLength: 16, valueLength: 10, toCrt: crt.SeparateChaining},
 			{crtToName: "LinearProbing", toBuckets: 100000, keyLength: 16, valueLength: 10, toCrt: crt.LinearProbing},
 			{crtToName: "QuadraticProbing", toBuckets: 100000, keyLength: 16, valueLength: 10, toCrt: crt.QuadraticProbing},
 		}
@@ -158,15 +158,24 @@ func TestReorgFiles(t *testing.T) {
 	t.Run("ReorgFiles tests for all CRTs", func(t *testing.T) {
 		// Prepare
 		tests := []TestCaseFileHashMap{
-			{crtFromName: "OpenChaining", crtToName: "OpenChaining", fromBuckets: 10, toBuckets: 100, keyLength: 5, valueLength: 10, fromCrt: crt.OpenChaining, toCrt: crt.OpenChaining},
+			{crtFromName: "SeparateChaining", crtToName: "SeparateChaining", fromBuckets: 10, toBuckets: 100, keyLength: 5, valueLength: 10, fromCrt: crt.SeparateChaining, toCrt: crt.SeparateChaining},
 			{crtFromName: "LinearProbing", crtToName: "LinearProbing", fromBuckets: 100, toBuckets: 100, keyLength: 5, valueLength: 10, fromCrt: crt.LinearProbing, toCrt: crt.LinearProbing},
 			{crtFromName: "QuadraticProbing", crtToName: "QuadraticProbing", fromBuckets: 100, toBuckets: 100, keyLength: 5, valueLength: 10, fromCrt: crt.QuadraticProbing, toCrt: crt.QuadraticProbing},
-			{crtFromName: "OpenChaining", crtToName: "LinearProbing", fromBuckets: 10, toBuckets: 100, keyLength: 5, valueLength: 10, fromCrt: crt.OpenChaining, toCrt: crt.LinearProbing},
-			{crtFromName: "LinearProbing", crtToName: "OpenChaining", fromBuckets: 100, toBuckets: 10, keyLength: 5, valueLength: 10, fromCrt: crt.LinearProbing, toCrt: crt.OpenChaining},
-			{crtFromName: "OpenChaining", crtToName: "QuadraticProbing", fromBuckets: 10, toBuckets: 100, keyLength: 5, valueLength: 10, fromCrt: crt.OpenChaining, toCrt: crt.QuadraticProbing},
-			{crtFromName: "QuadraticProbing", crtToName: "OpenChaining", fromBuckets: 100, toBuckets: 10, keyLength: 5, valueLength: 10, fromCrt: crt.QuadraticProbing, toCrt: crt.OpenChaining},
+			{crtFromName: "DoubleHashing", crtToName: "DoubleHashing", fromBuckets: 100, toBuckets: 100, keyLength: 5, valueLength: 10, fromCrt: crt.DoubleHashing, toCrt: crt.DoubleHashing},
+
+			{crtFromName: "SeparateChaining", crtToName: "LinearProbing", fromBuckets: 10, toBuckets: 100, keyLength: 5, valueLength: 10, fromCrt: crt.SeparateChaining, toCrt: crt.LinearProbing},
+			{crtFromName: "SeparateChaining", crtToName: "QuadraticProbing", fromBuckets: 10, toBuckets: 100, keyLength: 5, valueLength: 10, fromCrt: crt.SeparateChaining, toCrt: crt.QuadraticProbing},
+			{crtFromName: "SeparateChaining", crtToName: "DoubleHashing", fromBuckets: 10, toBuckets: 100, keyLength: 5, valueLength: 10, fromCrt: crt.SeparateChaining, toCrt: crt.DoubleHashing},
 			{crtFromName: "LinearProbing", crtToName: "QuadraticProbing", fromBuckets: 100, toBuckets: 100, keyLength: 5, valueLength: 10, fromCrt: crt.LinearProbing, toCrt: crt.QuadraticProbing},
+			{crtFromName: "LinearProbing", crtToName: "DoubleHashing", fromBuckets: 100, toBuckets: 100, keyLength: 5, valueLength: 10, fromCrt: crt.LinearProbing, toCrt: crt.DoubleHashing},
+			{crtFromName: "QuadraticProbing", crtToName: "DoubleHashing", fromBuckets: 100, toBuckets: 100, keyLength: 5, valueLength: 10, fromCrt: crt.QuadraticProbing, toCrt: crt.DoubleHashing},
+
+			{crtFromName: "LinearProbing", crtToName: "SeparateChaining", fromBuckets: 100, toBuckets: 10, keyLength: 5, valueLength: 10, fromCrt: crt.LinearProbing, toCrt: crt.SeparateChaining},
+			{crtFromName: "QuadraticProbing", crtToName: "SeparateChaining", fromBuckets: 100, toBuckets: 10, keyLength: 5, valueLength: 10, fromCrt: crt.QuadraticProbing, toCrt: crt.SeparateChaining},
+			{crtFromName: "DoubleHashing", crtToName: "SeparateChaining", fromBuckets: 100, toBuckets: 10, keyLength: 5, valueLength: 10, fromCrt: crt.DoubleHashing, toCrt: crt.SeparateChaining},
 			{crtFromName: "QuadraticProbing", crtToName: "LinearProbing", fromBuckets: 100, toBuckets: 100, keyLength: 5, valueLength: 10, fromCrt: crt.QuadraticProbing, toCrt: crt.LinearProbing},
+			{crtFromName: "DoubleHashing", crtToName: "LinearProbing", fromBuckets: 100, toBuckets: 100, keyLength: 5, valueLength: 10, fromCrt: crt.DoubleHashing, toCrt: crt.LinearProbing},
+			{crtFromName: "DoubleHashing", crtToName: "QuadraticProbing", fromBuckets: 100, toBuckets: 100, keyLength: 5, valueLength: 10, fromCrt: crt.DoubleHashing, toCrt: crt.QuadraticProbing},
 		}
 
 		for _, test := range tests {

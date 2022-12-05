@@ -30,3 +30,15 @@ func ExtendByteSlice(a []byte, extension int64, prepend bool) (b []byte) {
 
 	return
 }
+
+// RoundUp2 - Rounds up to the nearest exponent of 2
+func RoundUp2(a int64) int64 {
+	r := uint64(a - 1)
+	r |= r >> 1
+	r |= r >> 2
+	r |= r >> 4
+	r |= r >> 8
+	r |= r >> 16
+	r |= r >> 32
+	return int64(r + 1)
+}

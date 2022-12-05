@@ -1,6 +1,6 @@
 //go:build unit
 
-package scres
+package separatechaining
 
 import (
 	"github.com/gostonefire/filehashmap/crt"
@@ -130,7 +130,7 @@ func TestSCFiles_GetStorageParameters(t *testing.T) {
 		sp := scFiles.GetStorageParameters()
 
 		// Check
-		assert.Equal(t, crt.OpenChaining, sp.CollisionResolutionTechnique, "correct crt")
+		assert.Equal(t, crt.SeparateChaining, sp.CollisionResolutionTechnique, "correct crt")
 		assert.Equal(t, crtConf.KeyLength, sp.KeyLength, "key length preserved")
 		assert.Equal(t, crtConf.ValueLength, sp.ValueLength, "value length preserved")
 		assert.Equal(t, scFiles.numberOfBucketsNeeded, sp.NumberOfBucketsNeeded, "number of buckets preserved")

@@ -3,12 +3,12 @@ package crt
 // Do not assign 0 (zero) to any of the Collision Resolution Techniques. Zero is used to denote for ReorgConf that no
 // change in technique is needed.
 const (
-	// OpenChaining - Represents the collision resolution technique by adding linked list to bucket when collision occurs
+	// SeparateChaining - Represents the collision resolution technique by adding linked list to bucket when collision occurs
 	//
 	// The Hashing technique, which uses a linked list to handle collisions, is termed as separate chaining.
 	//
 	//Different elements at the same position in the hash table are stored in a linked list.
-	OpenChaining int = 1
+	SeparateChaining int = 1
 
 	// LinearProbing - Represents the collision resolution technique where a linear search for a free bucket is used to resolve collision
 	//

@@ -1,9 +1,9 @@
-package qpres
+package openaddressing
 
 import (
 	"fmt"
 	"github.com/gostonefire/filehashmap/crt"
-	hashfunc "github.com/gostonefire/filehashmap/interfaces"
+	"github.com/gostonefire/filehashmap/hashfunc"
 	"github.com/gostonefire/filehashmap/internal/hash"
 	"github.com/gostonefire/filehashmap/internal/model"
 	"github.com/gostonefire/filehashmap/internal/overflow"
@@ -11,80 +11,76 @@ import (
 	"os"
 )
 
-// QPFiles - Represents an implementation of file support for the Quadratic Probing Collision Resolution Technique.
+// OAFiles - Represents an implementation of file support for the Open Addressing Collision Resolution Techniques.
 // It uses one file of buckets where each bucket represents a record. In case of a collision, it probes through
-// the hash table using a quadratic algorithm, looking for an empty slot, and assigns the free slot to the value.
+// the hash table using a collision resolution algorithm, looking for an empty slot, and assigns the free slot to the value.
 // Once all free slots are occupied the table will accept no more records.
-type QPFiles struct {
-	mapFileName              string
-	mapFile                  *os.File
-	keyLength                int64
-	valueLength              int64
-	numberOfBucketsNeeded    int64
-	numberOfBucketsAvailable int64
-	maxBucketNo              int64
-	mapFileSize              int64
-	hashAlgorithm            hashfunc.HashAlgorithm
-	internalAlgorithm        bool
-	roundUp2                 int64
-	nEmpty                   int64
-	nOccupied                int64
-	nDeleted                 int64
+type OAFiles struct {
+	mapFileName                  string
+	mapFile                      *os.File
+	keyLength                    int64
+	valueLength                  int64
+	numberOfBucketsNeeded        int64
+	numberOfBucketsAvailable     int64
+	maxBucketNo                  int64
+	mapFileSize                  int64
+	hashAlgorithm                hashfunc.HashAlgorithm
+	internalAlgorithm            bool
+	CollisionResolutionTechnique int
+	nEmpty                       int64
+	nOccupied                    int64
+	nDeleted                     int64
 }
 
-// NewQPFiles - Returns a pointer to a new instance of Quadratic Probing file implementation.
+// NewOAFiles - Returns a pointer to a new instance of Open Addressing file implementation.
 // It always creates a new file (or opens and truncate existing file)
 //   - crtConf is a model.CRTConf struct providing configuration parameter affecting files creation and processing
 //
 // It returns:
-//   - qpFiles which is a pointer to the created instance
+//   - oaFiles which is a pointer to the created instance
 //   - err which is a standard Go type of error
-func NewQPFiles(crtConf model.CRTConf) (qpFiles *QPFiles, err error) {
+func NewOAFiles(crtConf model.CRTConf) (oaFiles *OAFiles, err error) {
 	// If no HashAlgorithm was given then use the default internal
 	var internalAlg bool
 	if crtConf.HashAlgorithm == nil {
-		crtConf.HashAlgorithm = hash.NewSingleHashAlgorithm(crtConf.NumberOfBucketsNeeded)
+		switch crtConf.CollisionResolutionTechnique {
+		case crt.LinearProbing:
+			crtConf.HashAlgorithm = hash.NewLinearProbingHashAlgorithm(crtConf.NumberOfBucketsNeeded)
+		case crt.QuadraticProbing:
+			crtConf.HashAlgorithm = hash.NewQuadraticProbingHashAlgorithm(crtConf.NumberOfBucketsNeeded)
+		case crt.DoubleHashing:
+			crtConf.HashAlgorithm = hash.NewDoubleHashAlgorithm(crtConf.NumberOfBucketsNeeded)
+		}
 		internalAlg = true
+	} else {
+		crtConf.HashAlgorithm.SetTableSize(crtConf.NumberOfBucketsNeeded)
 	}
-
-	// Add one extra bucket to be the golden bucket never to be occupied to assist the Quadratic Probing algorithm
-	crtConf.HashAlgorithm.UpdateTableSize(1)
 
 	// Calculate the hash map file various parameters
 	bucketLength := 1 + crtConf.KeyLength + crtConf.ValueLength // First byte is record state
-	maxBucketNo := crtConf.HashAlgorithm.HashFunc1MaxValue()
+	maxBucketNo := crtConf.HashAlgorithm.GetTableSize() - 1
 	numberOfBuckets := maxBucketNo + 1
 	fileSize := bucketLength*numberOfBuckets + storage.MapFileHeaderLength
 
-	// Calculate the round up number of buckets to the closest power of 2, will be used in Quadratic Probing
-	r := uint64(numberOfBuckets - 1)
-	r |= r >> 1
-	r |= r >> 2
-	r |= r >> 4
-	r |= r >> 8
-	r |= r >> 16
-	r |= r >> 32
-	roundUp2 := int64(r + 1)
-
-	qpFiles = &QPFiles{
-		mapFileName:              storage.GetMapFileName(crtConf.Name),
-		keyLength:                crtConf.KeyLength,
-		valueLength:              crtConf.ValueLength,
-		numberOfBucketsNeeded:    crtConf.NumberOfBucketsNeeded,
-		numberOfBucketsAvailable: numberOfBuckets,
-		maxBucketNo:              maxBucketNo,
-		mapFileSize:              fileSize,
-		hashAlgorithm:            crtConf.HashAlgorithm,
-		internalAlgorithm:        internalAlg,
-		roundUp2:                 roundUp2,
-		nEmpty:                   numberOfBuckets,
-		nOccupied:                0,
-		nDeleted:                 0,
+	oaFiles = &OAFiles{
+		mapFileName:                  storage.GetMapFileName(crtConf.Name),
+		keyLength:                    crtConf.KeyLength,
+		valueLength:                  crtConf.ValueLength,
+		numberOfBucketsNeeded:        crtConf.NumberOfBucketsNeeded,
+		numberOfBucketsAvailable:     numberOfBuckets,
+		maxBucketNo:                  maxBucketNo,
+		mapFileSize:                  fileSize,
+		hashAlgorithm:                crtConf.HashAlgorithm,
+		internalAlgorithm:            internalAlg,
+		CollisionResolutionTechnique: crtConf.CollisionResolutionTechnique,
+		nEmpty:                       numberOfBuckets,
+		nOccupied:                    0,
+		nDeleted:                     0,
 	}
 
-	header := qpFiles.createHeader()
+	header := oaFiles.createHeader()
 
-	err = qpFiles.createNewHashMapFile(header)
+	err = oaFiles.createNewHashMapFile(header)
 	if err != nil {
 		return
 	}
@@ -92,32 +88,32 @@ func NewQPFiles(crtConf model.CRTConf) (qpFiles *QPFiles, err error) {
 	return
 }
 
-// NewQPFilesFromExistingFiles - Returns a pointer to a new instance of Quadratic Probing file implementation given
+// NewOAFilesFromExistingFiles - Returns a pointer to a new instance of Open Addressing file implementation given
 // existing files. If files doesn't exist, doesn't have a valid header or if its file size seems wrong given
 // size from header it fails with error.
 //   - Name is the name to base map file name on
 //
 // It returns:
-//   - qpFiles which is a pointer to the created instance
+//   - oaFiles which is a pointer to the created instance
 //   - err which is a standard Go type of error
-func NewQPFilesFromExistingFiles(name string, hashAlgorithm hashfunc.HashAlgorithm) (qpFiles *QPFiles, err error) {
+func NewOAFilesFromExistingFiles(name string, hashAlgorithm hashfunc.HashAlgorithm) (oaFiles *OAFiles, err error) {
 	mapFileName := storage.GetMapFileName(name)
 
-	qpFiles = &QPFiles{mapFileName: mapFileName}
+	oaFiles = &OAFiles{mapFileName: mapFileName}
 
-	header, err := qpFiles.openHashMapFile()
+	header, err := oaFiles.openHashMapFile()
 	if err != nil {
 		return
 	}
 
 	// Check for mismatch in choice of hash algorithm
 	if header.InternalHash && hashAlgorithm != nil {
-		qpFiles.CloseFiles()
+		oaFiles.CloseFiles()
 		err = fmt.Errorf("seems the hash map file was used with the internal hash algorithm but an external was given")
 		return
 	}
 	if !header.InternalHash && hashAlgorithm == nil {
-		qpFiles.CloseFiles()
+		oaFiles.CloseFiles()
 		err = fmt.Errorf("seems the hash map file was used with the external hash algorithm but no external was given")
 		return
 	}
@@ -125,41 +121,37 @@ func NewQPFilesFromExistingFiles(name string, hashAlgorithm hashfunc.HashAlgorit
 	// If no HashAlgorithm was given then use the default internal
 	var internalAlg bool
 	if hashAlgorithm == nil {
-		hashAlgorithm = hash.NewSingleHashAlgorithm(header.NumberOfBucketsNeeded)
+		switch int(header.CollisionResolutionTechnique) {
+		case crt.LinearProbing:
+			hashAlgorithm = hash.NewLinearProbingHashAlgorithm(header.NumberOfBucketsNeeded)
+		case crt.QuadraticProbing:
+			hashAlgorithm = hash.NewQuadraticProbingHashAlgorithm(header.NumberOfBucketsNeeded)
+		case crt.DoubleHashing:
+			hashAlgorithm = hash.NewDoubleHashAlgorithm(header.NumberOfBucketsNeeded)
+		}
 		internalAlg = true
+	} else {
+		hashAlgorithm.SetTableSize(header.NumberOfBucketsNeeded)
 	}
 
-	// Add one extra bucket to be the golden bucket never to be occupied to assist the Quadratic Probing algorithm
-	hashAlgorithm.UpdateTableSize(1)
-
-	// Calculate the round up number of buckets to the closest power of 2, will be used in Quadratic Probing
-	r := uint64(header.NumberOfBucketsAvailable - 1)
-	r |= r >> 1
-	r |= r >> 2
-	r |= r >> 4
-	r |= r >> 8
-	r |= r >> 16
-	r |= r >> 32
-	roundUp2 := int64(r + 1)
-
-	qpFiles.keyLength = header.KeyLength
-	qpFiles.valueLength = header.ValueLength
-	qpFiles.numberOfBucketsNeeded = header.NumberOfBucketsNeeded
-	qpFiles.numberOfBucketsAvailable = header.NumberOfBucketsAvailable
-	qpFiles.maxBucketNo = header.MaxBucketNo
-	qpFiles.mapFileSize = header.FileSize
-	qpFiles.hashAlgorithm = hashAlgorithm
-	qpFiles.internalAlgorithm = internalAlg
-	qpFiles.roundUp2 = roundUp2
-	qpFiles.nEmpty = header.NumberOfEmptyRecords
-	qpFiles.nOccupied = header.NumberOfOccupiedRecords
-	qpFiles.nDeleted = header.NumberOfDeletedRecords
+	oaFiles.keyLength = header.KeyLength
+	oaFiles.valueLength = header.ValueLength
+	oaFiles.numberOfBucketsNeeded = header.NumberOfBucketsNeeded
+	oaFiles.numberOfBucketsAvailable = header.NumberOfBucketsAvailable
+	oaFiles.maxBucketNo = header.MaxBucketNo
+	oaFiles.mapFileSize = header.FileSize
+	oaFiles.hashAlgorithm = hashAlgorithm
+	oaFiles.internalAlgorithm = internalAlg
+	oaFiles.CollisionResolutionTechnique = int(header.CollisionResolutionTechnique)
+	oaFiles.nEmpty = header.NumberOfEmptyRecords
+	oaFiles.nOccupied = header.NumberOfOccupiedRecords
+	oaFiles.nDeleted = header.NumberOfDeletedRecords
 
 	return
 }
 
 // CloseFiles - Closes the map files
-func (Q *QPFiles) CloseFiles() {
+func (Q *OAFiles) CloseFiles() {
 	if Q.mapFile != nil {
 		header := Q.createHeader()
 		err := storage.SetHeader(Q.mapFile, header)
@@ -172,7 +164,7 @@ func (Q *QPFiles) CloseFiles() {
 }
 
 // RemoveFiles - Removes the map files, make sure to close them first before calling this function
-func (Q *QPFiles) RemoveFiles() (err error) {
+func (Q *OAFiles) RemoveFiles() (err error) {
 	// Only try to remove if exists, and are not by accident directories (could happen when testing things out)
 	if stat, ok := os.Stat(Q.mapFileName); ok == nil {
 		if !stat.IsDir() {
@@ -188,9 +180,9 @@ func (Q *QPFiles) RemoveFiles() (err error) {
 }
 
 // GetStorageParameters - Returns a struct with storage parameters from SCFiles
-func (Q *QPFiles) GetStorageParameters() (params model.StorageParameters) {
+func (Q *OAFiles) GetStorageParameters() (params model.StorageParameters) {
 	params = model.StorageParameters{
-		CollisionResolutionTechnique: crt.QuadraticProbing,
+		CollisionResolutionTechnique: Q.CollisionResolutionTechnique,
 		KeyLength:                    Q.keyLength,
 		ValueLength:                  Q.valueLength,
 		NumberOfBucketsNeeded:        Q.numberOfBucketsNeeded,
@@ -209,7 +201,7 @@ func (Q *QPFiles) GetStorageParameters() (params model.StorageParameters) {
 //   - bucket is a model.Bucket struct containing all records in the map file
 //   - overflowIterator is a OverflowRecords struct that can be used to get any overflow records belonging to the bucket. This will always be nil in Linear Probing.
 //   - err is standard error
-func (Q *QPFiles) GetBucket(bucketNo int64) (bucket model.Bucket, overflowIterator *overflow.Records, err error) {
+func (Q *OAFiles) GetBucket(bucketNo int64) (bucket model.Bucket, overflowIterator *overflow.Records, err error) {
 	// Get current contents from within the bucket
 	bucket, err = Q.getBucketRecord(bucketNo)
 	if err != nil {
@@ -228,21 +220,15 @@ func (Q *QPFiles) GetBucket(bucketNo int64) (bucket model.Bucket, overflowIterat
 // It returns:
 //   - record is the value of the matching record if found, if not found an error of type crt.NoRecordFound is also returned.
 //   - err is either of type crt.NoRecordFound or a standard error, if something went wrong
-func (Q *QPFiles) Get(keyRecord model.Record) (record model.Record, err error) {
+func (Q *OAFiles) Get(keyRecord model.Record) (record model.Record, err error) {
 	// Check validity of the key
 	if int64(len(keyRecord.Key)) != Q.keyLength {
 		err = fmt.Errorf("wrong length of key, should be %d", Q.keyLength)
 		return
 	}
 
-	// Get current contents from within the bucket
-	bucketNo, err := Q.getBucketNo(keyRecord.Key)
-	if err != nil {
-		return
-	}
-
 	// Tro to find the key in the file
-	record, err = Q.quadraticProbingForGet(bucketNo, keyRecord.Key)
+	record, err = Q.probingForGet(keyRecord.Key)
 
 	return
 }
@@ -252,7 +238,7 @@ func (Q *QPFiles) Get(keyRecord model.Record) (record model.Record, err error) {
 //
 // It returns:
 //   - err is a standard error, if something went wrong
-func (Q *QPFiles) Set(record model.Record) (err error) {
+func (Q *OAFiles) Set(record model.Record) (err error) {
 	// Check validity of the key
 	if int64(len(record.Key)) != Q.keyLength {
 		err = fmt.Errorf("wrong length of key, should be %d", Q.keyLength)
@@ -264,13 +250,7 @@ func (Q *QPFiles) Set(record model.Record) (err error) {
 		return
 	}
 
-	// Get current contents from within the bucket
-	bucketNo, err := Q.getBucketNo(record.Key)
-	if err != nil {
-		return
-	}
-
-	selectedRecord, err := Q.quadraticProbingForSet(bucketNo, record.Key)
+	selectedRecord, err := Q.probingForSet(record.Key)
 	if err != nil {
 		return
 	}
@@ -296,7 +276,7 @@ func (Q *QPFiles) Set(record model.Record) (err error) {
 //
 // It returns:
 //   - err is a standard error, if something went wrong
-func (Q *QPFiles) Delete(record model.Record) (err error) {
+func (Q *OAFiles) Delete(record model.Record) (err error) {
 	fromState := record.State
 	record.State = model.RecordDeleted
 	record.Key = make([]byte, Q.keyLength)

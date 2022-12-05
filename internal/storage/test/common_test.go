@@ -8,9 +8,8 @@ import (
 	"github.com/gostonefire/filehashmap/crt"
 	"github.com/gostonefire/filehashmap/internal/model"
 	"github.com/gostonefire/filehashmap/internal/storage"
-	"github.com/gostonefire/filehashmap/internal/storage/lpres"
-	"github.com/gostonefire/filehashmap/internal/storage/qpres"
-	"github.com/gostonefire/filehashmap/internal/storage/scres"
+	"github.com/gostonefire/filehashmap/internal/storage/openaddressing"
+	"github.com/gostonefire/filehashmap/internal/storage/separatechaining"
 	"github.com/stretchr/testify/assert"
 	"math/rand"
 	"os"
@@ -19,10 +18,10 @@ import (
 
 type TestCaseCommon struct {
 	crtName            string
-	buckets            int
+	buckets            int64
 	bucketHeaderLength int
-	keyLength          int
-	valueLength        int
+	keyLength          int64
+	valueLength        int64
 	crt                int
 }
 
@@ -30,33 +29,30 @@ func TestGetFileUtilization(t *testing.T) {
 	t.Run("utilization tests for all CRTs", func(t *testing.T) {
 		// Prepare
 		tests := []TestCaseCommon{
-			{crtName: "OpenChaining", buckets: 1000, bucketHeaderLength: 8, keyLength: 16, valueLength: 10, crt: crt.OpenChaining},
+			{crtName: "SeparateChaining", buckets: 1000, bucketHeaderLength: 8, keyLength: 16, valueLength: 10, crt: crt.SeparateChaining},
 			{crtName: "LinearProbing", buckets: 1000, bucketHeaderLength: 0, keyLength: 16, valueLength: 10, crt: crt.LinearProbing},
 			{crtName: "QuadraticProbing", buckets: 1000, bucketHeaderLength: 0, keyLength: 16, valueLength: 10, crt: crt.QuadraticProbing},
+			{crtName: "DoubleHashing", buckets: 1000, bucketHeaderLength: 0, keyLength: 16, valueLength: 10, crt: crt.DoubleHashing},
 		}
 
 		for _, test := range tests {
 			t.Run(fmt.Sprintf("gets utilization information for %s", test.crtName), func(t *testing.T) {
 				// Prepare
 				crtConf := model.CRTConf{
-					Name:                  "test",
-					NumberOfBucketsNeeded: int64(test.buckets),
-					KeyLength:             int64(test.keyLength),
-					ValueLength:           int64(test.valueLength),
-					HashAlgorithm:         nil,
+					Name:                         "test",
+					NumberOfBucketsNeeded:        test.buckets,
+					KeyLength:                    test.keyLength,
+					ValueLength:                  test.valueLength,
+					CollisionResolutionTechnique: test.crt,
+					HashAlgorithm:                nil,
 				}
 
 				var fhm filehashmap.FileManagement
 				var err error
-				switch test.crt {
-				case crt.OpenChaining:
-					fhm, err = scres.NewSCFiles(crtConf)
-				case crt.LinearProbing:
-					fhm, err = lpres.NewLPFiles(crtConf)
-				case crt.QuadraticProbing:
-					fhm, err = qpres.NewQPFiles(crtConf)
-				default:
-					err = fmt.Errorf("crt not yet implemented")
+				if test.crt == crt.SeparateChaining {
+					fhm, err = separatechaining.NewSCFiles(crtConf)
+				} else {
+					fhm, err = openaddressing.NewOAFiles(crtConf)
 				}
 				assert.NoError(t, err, "creates crt file(s)")
 
@@ -94,7 +90,7 @@ func TestGetFileUtilization(t *testing.T) {
 
 				// Check
 				assert.NoError(t, err, "gets file utilization information")
-				if test.crt == crt.OpenChaining {
+				if test.crt == crt.SeparateChaining {
 					assert.NotZero(t, header.NumberOfEmptyRecords, "has empty records")
 					assert.Equal(t, headerInit.NumberOfEmptyRecords, header.NumberOfEmptyRecords, "same empty records between header and counted")
 					assert.NotZero(t, header.NumberOfOccupiedRecords, "has occupied records")

@@ -1,4 +1,4 @@
-package scres
+package separatechaining
 
 // ovflFileHeaderLength - Length of overflow file header
 const ovflFileHeaderLength int64 = 1024
