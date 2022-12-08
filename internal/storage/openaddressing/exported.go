@@ -22,6 +22,7 @@ type OAFiles struct {
 	valueLength                  int64
 	numberOfBucketsNeeded        int64
 	numberOfBucketsAvailable     int64
+	recordsPerBucket             int64
 	maxBucketNo                  int64
 	mapFileSize                  int64
 	hashAlgorithm                hashfunc.HashAlgorithm
@@ -54,7 +55,8 @@ func NewOAFiles(crtConf model.CRTConf) (oaFiles *OAFiles, err error) {
 	}
 
 	// Calculate the hash map file various parameters
-	bucketLength := 1 + crtConf.KeyLength + crtConf.ValueLength // First byte is record state
+	recordLength := 1 + crtConf.KeyLength + crtConf.ValueLength // First byte is record state
+	bucketLength := recordLength * crtConf.RecordsPerBucket
 	maxBucketNo := crtConf.HashAlgorithm.GetTableSize() - 1
 	numberOfBuckets := maxBucketNo + 1
 	fileSize := bucketLength*numberOfBuckets + storage.MapFileHeaderLength
@@ -65,6 +67,7 @@ func NewOAFiles(crtConf model.CRTConf) (oaFiles *OAFiles, err error) {
 		valueLength:                  crtConf.ValueLength,
 		numberOfBucketsNeeded:        crtConf.NumberOfBucketsNeeded,
 		numberOfBucketsAvailable:     numberOfBuckets,
+		recordsPerBucket:             crtConf.RecordsPerBucket,
 		maxBucketNo:                  maxBucketNo,
 		mapFileSize:                  fileSize,
 		hashAlgorithm:                crtConf.HashAlgorithm,
@@ -132,6 +135,7 @@ func NewOAFilesFromExistingFiles(name string, hashAlgorithm hashfunc.HashAlgorit
 	oaFiles.valueLength = header.ValueLength
 	oaFiles.numberOfBucketsNeeded = header.NumberOfBucketsNeeded
 	oaFiles.numberOfBucketsAvailable = header.NumberOfBucketsAvailable
+	oaFiles.recordsPerBucket = header.RecordsPerBucket
 	oaFiles.maxBucketNo = header.MaxBucketNo
 	oaFiles.mapFileSize = header.FileSize
 	oaFiles.hashAlgorithm = hashAlgorithm
@@ -173,6 +177,7 @@ func (Q *OAFiles) GetStorageParameters() (params model.StorageParameters) {
 		ValueLength:                  Q.valueLength,
 		NumberOfBucketsNeeded:        Q.numberOfBucketsNeeded,
 		NumberOfBucketsAvailable:     Q.numberOfBucketsAvailable,
+		RecordsPerBucket:             Q.recordsPerBucket,
 		MapFileSize:                  Q.mapFileSize,
 		InternalAlgorithm:            Q.internalAlgorithm,
 	}
@@ -189,7 +194,7 @@ func (Q *OAFiles) GetStorageParameters() (params model.StorageParameters) {
 //   - err is standard error
 func (Q *OAFiles) GetBucket(bucketNo int64) (bucket model.Bucket, overflowIterator *overflow.Records, err error) {
 	// Get current contents from within the bucket
-	bucket, err = Q.getBucketRecord(bucketNo)
+	bucket, err = Q.getBucketRecords(bucketNo)
 	if err != nil {
 		err = fmt.Errorf("error while getting existing bucket records from hash map file: %s", err)
 		return

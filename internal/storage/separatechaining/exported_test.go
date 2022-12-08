@@ -19,6 +19,7 @@ func TestNewSCFiles(t *testing.T) {
 		crtConf := model.CRTConf{
 			Name:                  "test",
 			NumberOfBucketsNeeded: 10,
+			RecordsPerBucket:      2,
 			KeyLength:             16,
 			ValueLength:           10,
 			HashAlgorithm:         nil,
@@ -28,7 +29,7 @@ func TestNewSCFiles(t *testing.T) {
 		scFiles, err := NewSCFiles(crtConf)
 
 		// Check
-		mapFileSize := storage.MapFileHeaderLength + scFiles.numberOfBucketsAvailable*(crtConf.KeyLength+crtConf.ValueLength+1+bucketHeaderLength)
+		mapFileSize := storage.MapFileHeaderLength + scFiles.numberOfBucketsAvailable*((crtConf.KeyLength+crtConf.ValueLength+1)*2+bucketHeaderLength)
 		assert.NoError(t, err, "create new SCFiles instance")
 		assert.Equal(t, "test-map.bin", scFiles.mapFileName, "map filename correct")
 		assert.Equal(t, "test-ovfl.bin", scFiles.ovflFileName, "overflow filename correct")
@@ -37,7 +38,6 @@ func TestNewSCFiles(t *testing.T) {
 		assert.Equal(t, crtConf.NumberOfBucketsNeeded, scFiles.numberOfBucketsNeeded, "buckets needed preserved")
 		assert.Equal(t, crtConf.KeyLength, scFiles.keyLength, "key length preserved")
 		assert.Equal(t, crtConf.ValueLength, scFiles.valueLength, "value length preserved")
-		assert.Zero(t, scFiles.minBucketNo, "min bucket number is zero")
 		assert.NotZero(t, scFiles.maxBucketNo, "max bucket number is not zero")
 		assert.Equal(t, scFiles.mapFileSize, mapFileSize, "map file in correct size")
 		assert.NotNil(t, scFiles.hashAlgorithm, "hash algorithm is assigned")
@@ -67,6 +67,7 @@ func TestNewSCFilesFromExistingFiles(t *testing.T) {
 		crtConf := model.CRTConf{
 			Name:                  "test",
 			NumberOfBucketsNeeded: 10,
+			RecordsPerBucket:      3,
 			KeyLength:             16,
 			ValueLength:           10,
 			HashAlgorithm:         nil,
@@ -80,7 +81,7 @@ func TestNewSCFilesFromExistingFiles(t *testing.T) {
 		scFiles, err := NewSCFilesFromExistingFiles("test", nil)
 
 		// Check
-		mapFileSize := storage.MapFileHeaderLength + scFiles.numberOfBucketsAvailable*(crtConf.KeyLength+crtConf.ValueLength+1+bucketHeaderLength)
+		mapFileSize := storage.MapFileHeaderLength + scFiles.numberOfBucketsAvailable*((crtConf.KeyLength+crtConf.ValueLength+1)*3+bucketHeaderLength)
 		assert.NoError(t, err, "opens existing files")
 		assert.Equal(t, "test-map.bin", scFiles.mapFileName, "map filename correct")
 		assert.Equal(t, "test-ovfl.bin", scFiles.ovflFileName, "overflow filename correct")
@@ -89,7 +90,6 @@ func TestNewSCFilesFromExistingFiles(t *testing.T) {
 		assert.Equal(t, crtConf.NumberOfBucketsNeeded, scFiles.numberOfBucketsNeeded, "buckets needed preserved")
 		assert.Equal(t, crtConf.KeyLength, scFiles.keyLength, "key length preserved")
 		assert.Equal(t, crtConf.ValueLength, scFiles.valueLength, "value length preserved")
-		assert.Zero(t, scFiles.minBucketNo, "min bucket number is zero")
 		assert.NotZero(t, scFiles.maxBucketNo, "max bucket number is not zero")
 		assert.Equal(t, scFiles.mapFileSize, mapFileSize, "map file in correct size")
 		assert.NotNil(t, scFiles.hashAlgorithm, "hash algorithm is assigned")
@@ -112,6 +112,7 @@ func TestSCFiles_GetStorageParameters(t *testing.T) {
 		crtConf := model.CRTConf{
 			Name:                  "test",
 			NumberOfBucketsNeeded: 10,
+			RecordsPerBucket:      4,
 			KeyLength:             16,
 			ValueLength:           10,
 			HashAlgorithm:         nil,
@@ -129,6 +130,7 @@ func TestSCFiles_GetStorageParameters(t *testing.T) {
 		assert.Equal(t, crtConf.ValueLength, sp.ValueLength, "value length preserved")
 		assert.Equal(t, scFiles.numberOfBucketsNeeded, sp.NumberOfBucketsNeeded, "number of buckets preserved")
 		assert.Equal(t, scFiles.numberOfBucketsAvailable, sp.NumberOfBucketsAvailable, "number of buckets preserved")
+		assert.Equal(t, crtConf.RecordsPerBucket, sp.RecordsPerBucket, "records per bucket preserved")
 		assert.Equal(t, scFiles.mapFileSize, sp.MapFileSize, "map file size preserved")
 		assert.True(t, sp.InternalAlgorithm, "indicates using internal hash algorithm")
 
@@ -150,6 +152,7 @@ func TestSCFiles_Set(t *testing.T) {
 		crtConf := model.CRTConf{
 			Name:                  "test",
 			NumberOfBucketsNeeded: 10,
+			RecordsPerBucket:      2,
 			KeyLength:             16,
 			ValueLength:           10,
 			HashAlgorithm:         nil,
@@ -187,6 +190,7 @@ func TestSCFiles_Get(t *testing.T) {
 		crtConf := model.CRTConf{
 			Name:                  "test",
 			NumberOfBucketsNeeded: 10,
+			RecordsPerBucket:      2,
 			KeyLength:             16,
 			ValueLength:           10,
 			HashAlgorithm:         nil,
@@ -233,6 +237,7 @@ func TestSCFiles_Delete(t *testing.T) {
 		crtConf := model.CRTConf{
 			Name:                  "test",
 			NumberOfBucketsNeeded: 10,
+			RecordsPerBucket:      4,
 			KeyLength:             16,
 			ValueLength:           10,
 			HashAlgorithm:         nil,
@@ -287,6 +292,7 @@ func TestSCFiles_Overflow(t *testing.T) {
 		crtConf := model.CRTConf{
 			Name:                  "test",
 			NumberOfBucketsNeeded: 10,
+			RecordsPerBucket:      2,
 			KeyLength:             16,
 			ValueLength:           10,
 			HashAlgorithm:         nil,
@@ -337,6 +343,7 @@ func TestSCFiles_GetBucket(t *testing.T) {
 		crtConf := model.CRTConf{
 			Name:                  "test",
 			NumberOfBucketsNeeded: 10,
+			RecordsPerBucket:      2,
 			KeyLength:             16,
 			ValueLength:           10,
 			HashAlgorithm:         nil,
@@ -363,7 +370,9 @@ func TestSCFiles_GetBucket(t *testing.T) {
 		assert.NoError(t, err, "gets a bucket")
 		assert.True(t, bucket.HasOverflow, "bucket has overflow")
 		assert.NotZero(t, bucket.OverflowAddress, "bucket has overflow address")
-		assert.Equal(t, model.RecordOccupied, bucket.Record.State, "record in bucket is in use")
+		for i := int64(0); i < crtConf.RecordsPerBucket; i++ {
+			assert.Equalf(t, model.RecordOccupied, bucket.Records[i].State, "record #%d in bucket is in use", i)
+		}
 
 		var hadOverflowRecord bool
 		var ovflRecord model.Record

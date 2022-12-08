@@ -13,7 +13,7 @@ const RecordDeleted uint8 = 2
 
 // Bucket - Represents all records in a bucket (both assigned and still not in use)
 type Bucket struct {
-	Record          Record
+	Records         []Record
 	BucketAddress   int64
 	OverflowAddress int64
 	HasOverflow     bool
@@ -36,6 +36,7 @@ type StorageParameters struct {
 	ValueLength                  int64
 	NumberOfBucketsNeeded        int64
 	NumberOfBucketsAvailable     int64
+	RecordsPerBucket             int64
 	MapFileSize                  int64
 	InternalAlgorithm            bool
 }
@@ -44,12 +45,14 @@ type StorageParameters struct {
 // file processing.
 //   - Name is the name to base map and overflow file names on
 //   - NumberOfBucketsNeeded is the number of buckets to calculate storage for
+//   - RecordsPerBucket is the number of records to store per bucket
 //   - KeyLength is the fixed length of keys to store
 //   - ValueLength is the fixed length of values to store
 //   - HashAlgorithm is the hash function(s) to use
 type CRTConf struct {
 	Name                         string
 	NumberOfBucketsNeeded        int64
+	RecordsPerBucket             int64
 	KeyLength                    int64
 	ValueLength                  int64
 	CollisionResolutionTechnique int

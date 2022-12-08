@@ -25,14 +25,17 @@ const numberOfBucketsNeededOffset int64 = 9
 // numberOfBucketsAvailableOffset - Header offset to number of buckets - 8 bytes
 const numberOfBucketsAvailableOffset int64 = 17
 
+// recordsPerBucketOffset - Header offset to number of records per bucket - 8 bytes
+const recordsPerBucketOffset int64 = 25
+
 // maxBucketNoOffset - Header offset to max (inclusive) bucket number - 8 bytes
-const maxBucketNoOffset int64 = 25
+const maxBucketNoOffset int64 = 33
 
 // fileSizeOffset - Header offset to the file size (should of course reflect true file size) - 8 bytes
-const fileSizeOffset int64 = 33
+const fileSizeOffset int64 = 41
 
 // collisionResolutionTechniqueOffset - Header offset to which collision resolution technique is used - 1 byte
-const collisionResolutionTechniqueOffset int64 = 41
+const collisionResolutionTechniqueOffset int64 = 49
 
 // Header - Represents the hash map file header data
 type Header struct {
@@ -41,6 +44,7 @@ type Header struct {
 	ValueLength                  int64
 	NumberOfBucketsNeeded        int64
 	NumberOfBucketsAvailable     int64
+	RecordsPerBucket             int64
 	MaxBucketNo                  int64
 	FileSize                     int64
 	CollisionResolutionTechnique int64
@@ -121,6 +125,7 @@ func bytesToHeader(buf []byte) (header Header) {
 		ValueLength:                  int64(binary.LittleEndian.Uint32(buf[valueLengthOffset:])),
 		NumberOfBucketsNeeded:        int64(binary.LittleEndian.Uint64(buf[numberOfBucketsNeededOffset:])),
 		NumberOfBucketsAvailable:     int64(binary.LittleEndian.Uint64(buf[numberOfBucketsAvailableOffset:])),
+		RecordsPerBucket:             int64(binary.LittleEndian.Uint64(buf[recordsPerBucketOffset:])),
 		MaxBucketNo:                  int64(binary.LittleEndian.Uint64(buf[maxBucketNoOffset:])),
 		FileSize:                     int64(binary.LittleEndian.Uint64(buf[fileSizeOffset:])),
 		CollisionResolutionTechnique: int64(buf[collisionResolutionTechniqueOffset]),
@@ -142,6 +147,7 @@ func headerToBytes(header Header) (buf []byte) {
 	binary.LittleEndian.PutUint32(buf[valueLengthOffset:], uint32(header.ValueLength))
 	binary.LittleEndian.PutUint64(buf[numberOfBucketsNeededOffset:], uint64(header.NumberOfBucketsNeeded))
 	binary.LittleEndian.PutUint64(buf[numberOfBucketsAvailableOffset:], uint64(header.NumberOfBucketsAvailable))
+	binary.LittleEndian.PutUint64(buf[recordsPerBucketOffset:], uint64(header.RecordsPerBucket))
 	binary.LittleEndian.PutUint64(buf[maxBucketNoOffset:], uint64(header.MaxBucketNo))
 	binary.LittleEndian.PutUint64(buf[fileSizeOffset:], uint64(header.FileSize))
 	buf[collisionResolutionTechniqueOffset] = uint8(header.CollisionResolutionTechnique)

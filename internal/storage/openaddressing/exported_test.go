@@ -17,6 +17,7 @@ import (
 type TestCaseOAFiles struct {
 	crtName     string
 	buckets     int64
+	rpb         int64
 	keyLength   int64
 	valueLength int64
 	crt         int
@@ -26,9 +27,9 @@ func TestNewOAFiles(t *testing.T) {
 	t.Run("creates QAFiles instances for all CRTs", func(t *testing.T) {
 		// Prepare
 		tests := []TestCaseOAFiles{
-			{crtName: "LinearProbing", buckets: 10, keyLength: 16, valueLength: 10, crt: crt.LinearProbing},
-			{crtName: "QuadraticProbing", buckets: 10, keyLength: 16, valueLength: 10, crt: crt.QuadraticProbing},
-			{crtName: "DoubleHashing", buckets: 10, keyLength: 16, valueLength: 10, crt: crt.DoubleHashing},
+			{crtName: "LinearProbing", buckets: 10, rpb: 1, keyLength: 16, valueLength: 10, crt: crt.LinearProbing},
+			{crtName: "QuadraticProbing", buckets: 10, rpb: 2, keyLength: 16, valueLength: 10, crt: crt.QuadraticProbing},
+			{crtName: "DoubleHashing", buckets: 10, rpb: 3, keyLength: 16, valueLength: 10, crt: crt.DoubleHashing},
 		}
 
 		for _, test := range tests {
@@ -37,6 +38,7 @@ func TestNewOAFiles(t *testing.T) {
 				crtConf := model.CRTConf{
 					Name:                         "test",
 					NumberOfBucketsNeeded:        test.buckets,
+					RecordsPerBucket:             test.rpb,
 					KeyLength:                    test.keyLength,
 					ValueLength:                  test.valueLength,
 					CollisionResolutionTechnique: test.crt,
@@ -47,7 +49,7 @@ func TestNewOAFiles(t *testing.T) {
 				oaFiles, err := NewOAFiles(crtConf)
 
 				// Check
-				mapFileSize := storage.MapFileHeaderLength + oaFiles.numberOfBucketsAvailable*(crtConf.KeyLength+crtConf.ValueLength+1)
+				mapFileSize := storage.MapFileHeaderLength + oaFiles.numberOfBucketsAvailable*(crtConf.KeyLength+crtConf.ValueLength+1)*test.rpb
 				assert.NoError(t, err, "create new OAFiles instance")
 				assert.Equal(t, "test-map.bin", oaFiles.mapFileName, "map filename correct")
 				assert.NotNil(t, oaFiles.mapFile, "has map file")
@@ -79,9 +81,9 @@ func TestNewOAFilesFromExistingFiles(t *testing.T) {
 	t.Run("opens existing QAFiles for all CRTs", func(t *testing.T) {
 		// Prepare
 		tests := []TestCaseOAFiles{
-			{crtName: "LinearProbing", buckets: 10, keyLength: 16, valueLength: 10, crt: crt.LinearProbing},
-			{crtName: "QuadraticProbing", buckets: 10, keyLength: 16, valueLength: 10, crt: crt.QuadraticProbing},
-			{crtName: "DoubleHashing", buckets: 10, keyLength: 16, valueLength: 10, crt: crt.DoubleHashing},
+			{crtName: "LinearProbing", buckets: 10, rpb: 2, keyLength: 16, valueLength: 10, crt: crt.LinearProbing},
+			{crtName: "QuadraticProbing", buckets: 10, rpb: 3, keyLength: 16, valueLength: 10, crt: crt.QuadraticProbing},
+			{crtName: "DoubleHashing", buckets: 10, rpb: 4, keyLength: 16, valueLength: 10, crt: crt.DoubleHashing},
 		}
 
 		for _, test := range tests {
@@ -90,6 +92,7 @@ func TestNewOAFilesFromExistingFiles(t *testing.T) {
 				crtConf := model.CRTConf{
 					Name:                         "test",
 					NumberOfBucketsNeeded:        test.buckets,
+					RecordsPerBucket:             test.rpb,
 					KeyLength:                    test.keyLength,
 					ValueLength:                  test.valueLength,
 					CollisionResolutionTechnique: test.crt,
@@ -104,11 +107,12 @@ func TestNewOAFilesFromExistingFiles(t *testing.T) {
 				oaFiles, err := NewOAFilesFromExistingFiles("test", nil)
 
 				// Check
-				mapFileSize := storage.MapFileHeaderLength + oaFiles.numberOfBucketsAvailable*(crtConf.KeyLength+crtConf.ValueLength+1)
+				mapFileSize := storage.MapFileHeaderLength + oaFiles.numberOfBucketsAvailable*(crtConf.KeyLength+crtConf.ValueLength+1)*test.rpb
 				assert.NoError(t, err, "opens existing files")
 				assert.Equal(t, "test-map.bin", oaFiles.mapFileName, "map filename correct")
 				assert.NotNil(t, oaFiles.mapFile, "has map file")
 				assert.GreaterOrEqual(t, oaFiles.numberOfBucketsAvailable, crtConf.NumberOfBucketsNeeded, "needed buckets preserved in number of buckets")
+				assert.Equal(t, test.rpb, oaFiles.recordsPerBucket, "correct number of records per bucket")
 				assert.Equal(t, crtConf.KeyLength, oaFiles.keyLength, "key length preserved")
 				assert.Equal(t, crtConf.ValueLength, oaFiles.valueLength, "value length preserved")
 				assert.NotZero(t, oaFiles.maxBucketNo, "max bucket number is not zero")
@@ -132,9 +136,9 @@ func TestOAFiles_GetStorageParameters(t *testing.T) {
 	t.Run("gets storage parameters for all CRTs", func(t *testing.T) {
 		// Prepare
 		tests := []TestCaseOAFiles{
-			{crtName: "LinearProbing", buckets: 10, keyLength: 16, valueLength: 10, crt: crt.LinearProbing},
-			{crtName: "QuadraticProbing", buckets: 10, keyLength: 16, valueLength: 10, crt: crt.QuadraticProbing},
-			{crtName: "DoubleHashing", buckets: 10, keyLength: 16, valueLength: 10, crt: crt.DoubleHashing},
+			{crtName: "LinearProbing", buckets: 10, rpb: 4, keyLength: 16, valueLength: 10, crt: crt.LinearProbing},
+			{crtName: "QuadraticProbing", buckets: 10, rpb: 5, keyLength: 16, valueLength: 10, crt: crt.QuadraticProbing},
+			{crtName: "DoubleHashing", buckets: 10, rpb: 6, keyLength: 16, valueLength: 10, crt: crt.DoubleHashing},
 		}
 
 		for _, test := range tests {
@@ -143,6 +147,7 @@ func TestOAFiles_GetStorageParameters(t *testing.T) {
 				crtConf := model.CRTConf{
 					Name:                         "test",
 					NumberOfBucketsNeeded:        test.buckets,
+					RecordsPerBucket:             test.rpb,
 					KeyLength:                    test.keyLength,
 					ValueLength:                  test.valueLength,
 					CollisionResolutionTechnique: test.crt,
@@ -161,6 +166,7 @@ func TestOAFiles_GetStorageParameters(t *testing.T) {
 				assert.Equal(t, crtConf.KeyLength, sp.KeyLength, "key length preserved")
 				assert.Equal(t, crtConf.ValueLength, sp.ValueLength, "value length preserved")
 				assert.Equal(t, oaFiles.numberOfBucketsAvailable, sp.NumberOfBucketsAvailable, "number of buckets preserved")
+				assert.Equal(t, test.rpb, sp.RecordsPerBucket, "records per bucket preserved")
 				assert.Equal(t, oaFiles.mapFileSize, sp.MapFileSize, "map file size preserved")
 				assert.True(t, sp.InternalAlgorithm, "indicates using internal hash algorithm")
 
@@ -181,9 +187,9 @@ func TestOAFiles_Set(t *testing.T) {
 	t.Run("sets a record in file for all CRTs", func(t *testing.T) {
 		// Prepare
 		tests := []TestCaseOAFiles{
-			{crtName: "LinearProbing", buckets: 1000, keyLength: 16, valueLength: 10, crt: crt.LinearProbing},
-			{crtName: "QuadraticProbing", buckets: 1000, keyLength: 16, valueLength: 10, crt: crt.QuadraticProbing},
-			{crtName: "DoubleHashing", buckets: 1000, keyLength: 16, valueLength: 10, crt: crt.DoubleHashing},
+			{crtName: "LinearProbing", buckets: 1000, rpb: 1, keyLength: 16, valueLength: 10, crt: crt.LinearProbing},
+			{crtName: "QuadraticProbing", buckets: 1000, rpb: 2, keyLength: 16, valueLength: 10, crt: crt.QuadraticProbing},
+			{crtName: "DoubleHashing", buckets: 1000, rpb: 3, keyLength: 16, valueLength: 10, crt: crt.DoubleHashing},
 		}
 
 		for _, test := range tests {
@@ -192,6 +198,7 @@ func TestOAFiles_Set(t *testing.T) {
 				crtConf := model.CRTConf{
 					Name:                         "test",
 					NumberOfBucketsNeeded:        test.buckets,
+					RecordsPerBucket:             test.rpb,
 					KeyLength:                    test.keyLength,
 					ValueLength:                  test.valueLength,
 					CollisionResolutionTechnique: test.crt,
@@ -226,6 +233,7 @@ func TestOAFiles_Set(t *testing.T) {
 				crtConf := model.CRTConf{
 					Name:                         "test",
 					NumberOfBucketsNeeded:        test.buckets,
+					RecordsPerBucket:             test.rpb,
 					KeyLength:                    test.keyLength,
 					ValueLength:                  test.valueLength,
 					CollisionResolutionTechnique: test.crt,
@@ -263,6 +271,7 @@ func TestOAFiles_Set(t *testing.T) {
 				crtConf := model.CRTConf{
 					Name:                         "test",
 					NumberOfBucketsNeeded:        test.buckets,
+					RecordsPerBucket:             test.rpb,
 					KeyLength:                    test.keyLength,
 					ValueLength:                  test.valueLength,
 					CollisionResolutionTechnique: test.crt,
@@ -272,21 +281,21 @@ func TestOAFiles_Set(t *testing.T) {
 				oaFiles, err := NewOAFiles(crtConf)
 				assert.NoError(t, err, "create new OAFiles instance")
 
-				records := make([]model.Record, oaFiles.numberOfBucketsAvailable+1)
-				for i := int64(0); i < oaFiles.numberOfBucketsAvailable+1; i++ {
+				records := make([]model.Record, oaFiles.numberOfBucketsAvailable*test.rpb+1)
+				for i := int64(0); i < oaFiles.numberOfBucketsAvailable*test.rpb+1; i++ {
 					records[i].Key = make([]byte, 16)
 					rand.Read(records[i].Key)
 					records[i].Value = make([]byte, 10)
 					rand.Read(records[i].Value)
 				}
 
-				for i := int64(0); i < oaFiles.numberOfBucketsAvailable; i++ {
+				for i := int64(0); i < oaFiles.numberOfBucketsAvailable*test.rpb; i++ {
 					err = oaFiles.Set(records[i])
 					assert.NoErrorf(t, err, "sets record #%d to file", i)
 				}
 
 				// Execute
-				err = oaFiles.Set(records[oaFiles.numberOfBucketsAvailable])
+				err = oaFiles.Set(records[oaFiles.numberOfBucketsAvailable*test.rpb])
 
 				// Check
 				assert.ErrorIs(t, err, crt.MapFileFull{}, "correct error when map file is full")
@@ -307,9 +316,9 @@ func TestOAFiles_Get(t *testing.T) {
 	t.Run("gets a record from file for all CRTs", func(t *testing.T) {
 		// Prepare
 		tests := []TestCaseOAFiles{
-			{crtName: "LinearProbing", buckets: 10, keyLength: 16, valueLength: 10, crt: crt.LinearProbing},
-			{crtName: "QuadraticProbing", buckets: 10, keyLength: 16, valueLength: 10, crt: crt.QuadraticProbing},
-			{crtName: "DoubleHashing", buckets: 10, keyLength: 16, valueLength: 10, crt: crt.DoubleHashing},
+			{crtName: "LinearProbing", buckets: 10, rpb: 10, keyLength: 16, valueLength: 10, crt: crt.LinearProbing},
+			{crtName: "QuadraticProbing", buckets: 10, rpb: 10, keyLength: 16, valueLength: 10, crt: crt.QuadraticProbing},
+			{crtName: "DoubleHashing", buckets: 10, rpb: 10, keyLength: 16, valueLength: 10, crt: crt.DoubleHashing},
 		}
 
 		for _, test := range tests {
@@ -318,6 +327,7 @@ func TestOAFiles_Get(t *testing.T) {
 				crtConf := model.CRTConf{
 					Name:                         "test",
 					NumberOfBucketsNeeded:        test.buckets,
+					RecordsPerBucket:             test.rpb,
 					KeyLength:                    test.keyLength,
 					ValueLength:                  test.valueLength,
 					CollisionResolutionTechnique: test.crt,
@@ -364,9 +374,9 @@ func TestOAFiles_Delete(t *testing.T) {
 	t.Run("deletes a bucket record from file for all CRTs", func(t *testing.T) {
 		// Prepare
 		tests := []TestCaseOAFiles{
-			{crtName: "LinearProbing", buckets: 10, keyLength: 16, valueLength: 10, crt: crt.LinearProbing},
-			{crtName: "QuadraticProbing", buckets: 10, keyLength: 16, valueLength: 10, crt: crt.QuadraticProbing},
-			{crtName: "DoubleHashing", buckets: 10, keyLength: 16, valueLength: 10, crt: crt.DoubleHashing},
+			{crtName: "LinearProbing", buckets: 10, rpb: 5, keyLength: 16, valueLength: 10, crt: crt.LinearProbing},
+			{crtName: "QuadraticProbing", buckets: 10, rpb: 5, keyLength: 16, valueLength: 10, crt: crt.QuadraticProbing},
+			{crtName: "DoubleHashing", buckets: 10, rpb: 5, keyLength: 16, valueLength: 10, crt: crt.DoubleHashing},
 		}
 
 		for _, test := range tests {
@@ -375,6 +385,7 @@ func TestOAFiles_Delete(t *testing.T) {
 				crtConf := model.CRTConf{
 					Name:                         "test",
 					NumberOfBucketsNeeded:        test.buckets,
+					RecordsPerBucket:             test.rpb,
 					KeyLength:                    test.keyLength,
 					ValueLength:                  test.valueLength,
 					CollisionResolutionTechnique: test.crt,
@@ -429,9 +440,9 @@ func TestOAFiles_GetBucket(t *testing.T) {
 	t.Run("returns a bucket for all CRTs", func(t *testing.T) {
 		// Prepare
 		tests := []TestCaseOAFiles{
-			{crtName: "LinearProbing", buckets: 10, keyLength: 16, valueLength: 10, crt: crt.LinearProbing},
-			{crtName: "QuadraticProbing", buckets: 10, keyLength: 16, valueLength: 10, crt: crt.QuadraticProbing},
-			{crtName: "DoubleHashing", buckets: 10, keyLength: 16, valueLength: 10, crt: crt.DoubleHashing},
+			{crtName: "LinearProbing", buckets: 10, rpb: 10, keyLength: 16, valueLength: 10, crt: crt.LinearProbing},
+			{crtName: "QuadraticProbing", buckets: 10, rpb: 10, keyLength: 16, valueLength: 10, crt: crt.QuadraticProbing},
+			{crtName: "DoubleHashing", buckets: 10, rpb: 10, keyLength: 16, valueLength: 10, crt: crt.DoubleHashing},
 		}
 
 		for _, test := range tests {
@@ -440,6 +451,7 @@ func TestOAFiles_GetBucket(t *testing.T) {
 				crtConf := model.CRTConf{
 					Name:                         "test",
 					NumberOfBucketsNeeded:        test.buckets,
+					RecordsPerBucket:             test.rpb,
 					KeyLength:                    test.keyLength,
 					ValueLength:                  test.valueLength,
 					CollisionResolutionTechnique: test.crt,
@@ -449,8 +461,8 @@ func TestOAFiles_GetBucket(t *testing.T) {
 				oaFiles, err := NewOAFiles(crtConf)
 				assert.NoError(t, err, "create new OAFiles instance")
 
-				records := make([]model.Record, oaFiles.numberOfBucketsAvailable-1)
-				for i := int64(0); i < oaFiles.numberOfBucketsAvailable-1; i++ {
+				records := make([]model.Record, oaFiles.numberOfBucketsAvailable*test.rpb)
+				for i := int64(0); i < oaFiles.numberOfBucketsAvailable*test.rpb; i++ {
 					records[i].Key = make([]byte, 16)
 					rand.Read(records[i].Key)
 					records[i].Value = make([]byte, 10)
@@ -468,7 +480,10 @@ func TestOAFiles_GetBucket(t *testing.T) {
 				assert.False(t, bucket.HasOverflow, "bucket has no overflow")
 				assert.Zero(t, bucket.OverflowAddress, "bucket has no overflow address")
 				assert.Nil(t, iterator, "no overflow iterator")
-				assert.Equal(t, model.RecordOccupied, bucket.Record.State, "record in bucket is in use")
+				for i := int64(0); i < test.rpb; i++ {
+					assert.Equalf(t, model.RecordOccupied, bucket.Records[i].State, "record #%d in bucket is in use", i)
+
+				}
 
 				// Clean up
 				oaFiles.CloseFiles()

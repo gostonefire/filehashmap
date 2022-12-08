@@ -82,12 +82,15 @@ func (F *FileHashMap) Stat(includeDistribution bool) (hashMapStat *HashMapStat, 
 		}
 
 		// Process map file records
-		if bucket.Record.State == model.RecordOccupied {
-			hms.Records++
-			hms.MapFileRecords++
-			if includeDistribution {
-				hms.BucketDistribution[i]++
+		for _, r := range bucket.Records {
+			if r.State == model.RecordOccupied {
+				hms.Records++
+				hms.MapFileRecords++
+				if includeDistribution {
+					hms.BucketDistribution[i]++
+				}
 			}
+
 		}
 
 		// Process overflow file records

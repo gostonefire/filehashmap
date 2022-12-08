@@ -7,25 +7,38 @@ import (
 )
 
 // bytesToBucket - Converts bucket raw data to a Bucket struct
-func bytesToBucket(buf []byte, bucketAddress, keyLength, valueLength int64) (bucket model.Bucket, err error) {
+func bytesToBucket(buf []byte, bucketAddress, recordsPerBucket, keyLength, valueLength int64) (bucket model.Bucket, err error) {
 	overFlowAddress := int64(binary.LittleEndian.Uint64(buf[bucketOverflowAddressOffset:]))
 
-	recordStart := bucketHeaderLength
-	keyStart := 1 + recordStart // First byte is record state
-	valueStart := keyStart + keyLength
+	records := make([]model.Record, recordsPerBucket)
 
-	key := make([]byte, keyLength)
-	value := make([]byte, valueLength)
-	_ = copy(key, buf[keyStart:keyStart+keyLength])
-	_ = copy(value, buf[valueStart:valueStart+valueLength])
+	recordLength := 1 + keyLength + valueLength // First byte is record state
+	bucketLength := bucketHeaderLength + recordLength*recordsPerBucket
 
-	bucket = model.Bucket{
-		Record: model.Record{
-			State:         buf[recordStart],
-			RecordAddress: bucketAddress + recordStart,
+	var key, value []byte
+	var keyStart, valueStart, n int64
+
+	for i := bucketHeaderLength; i < bucketLength; i += recordLength {
+		keyStart = i + 1
+		valueStart = keyStart + keyLength
+
+		key = make([]byte, keyLength)
+		value = make([]byte, valueLength)
+		_ = copy(key, buf[keyStart:keyStart+keyLength])
+		_ = copy(value, buf[valueStart:valueStart+valueLength])
+
+		records[n] = model.Record{
+			State:         buf[i],
+			RecordAddress: bucketAddress + i,
 			Key:           key,
 			Value:         value,
-		},
+		}
+
+		n++
+	}
+
+	bucket = model.Bucket{
+		Records:         records,
 		BucketAddress:   bucketAddress,
 		OverflowAddress: overFlowAddress,
 		HasOverflow:     overFlowAddress > 0,

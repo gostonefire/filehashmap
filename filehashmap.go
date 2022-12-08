@@ -25,11 +25,13 @@ type FileManagement interface {
 
 // HashMapInfo - Information structure containing some information about the hash map created
 //   - NumberOfBucketsNeeded is the need provided when calling the NewFileHashMap function
-//   - NumberOfBucketsAvailable is the total number of available buckets in the file hash map
+//   - NumberOfBucketsAvailable is the total number of available buckets in the hash map file
+//   - TotalRecords is the total number of records available in the hash map file (not including overflow)
 //   - FileSize is the total size of the map file created.
 type HashMapInfo struct {
 	NumberOfBucketsNeeded    int
 	NumberOfBucketsAvailable int
+	TotalRecords             int
 	FileSize                 int
 }
 
@@ -64,6 +66,7 @@ type FileHashMap struct {
 //   - name is the name of the file hash map and will be used to form file name(s)
 //   - crtType is the collision resolution technique to use in the new file hash map
 //   - bucketsNeeded is the max number of buckets needed, but depending on hash algorithm it may result in a different number of actual available buckets.
+//   - recordsPerBucket is the number of records to hold in each bucket in the map file. Since minimum is one, setting this below one will still create one.
 //   - keyLength is the length of the key part in a record
 //   - valueLength is the length of the value part in a record
 //   - hashAlgorithm is an optional entry to provide a custom hash algorithm following the HashAlgorithm hashfunc.
@@ -76,6 +79,7 @@ func NewFileHashMap(
 	name string,
 	crtType int,
 	bucketsNeeded int,
+	recordsPerBucket int,
 	keyLength int,
 	valueLength int,
 	hashAlgorithm hashfunc.HashAlgorithm,
@@ -117,9 +121,15 @@ func NewFileHashMap(
 		return
 	}
 
+	// Check and correct recordsPerBucket
+	if recordsPerBucket < 1 {
+		recordsPerBucket = 1
+	}
+
 	crtConf := model.CRTConf{
 		Name:                         name,
 		NumberOfBucketsNeeded:        int64(bucketsNeeded),
+		RecordsPerBucket:             int64(recordsPerBucket),
 		KeyLength:                    int64(keyLength),
 		ValueLength:                  int64(valueLength),
 		CollisionResolutionTechnique: crtType,
@@ -155,6 +165,7 @@ func NewFileHashMap(
 	hashMapInfo = HashMapInfo{
 		NumberOfBucketsNeeded:    int(sp.NumberOfBucketsNeeded),
 		NumberOfBucketsAvailable: int(sp.NumberOfBucketsAvailable),
+		TotalRecords:             int(sp.NumberOfBucketsAvailable * sp.RecordsPerBucket),
 		FileSize:                 int(sp.MapFileSize),
 	}
 
@@ -206,6 +217,7 @@ func NewFromExistingFiles(name string, hashAlgorithm hashfunc.HashAlgorithm) (
 	hashMapInfo = HashMapInfo{
 		NumberOfBucketsNeeded:    int(sp.NumberOfBucketsNeeded),
 		NumberOfBucketsAvailable: int(sp.NumberOfBucketsAvailable),
+		TotalRecords:             int(sp.NumberOfBucketsAvailable * sp.RecordsPerBucket),
 		FileSize:                 int(sp.MapFileSize),
 	}
 
@@ -215,6 +227,7 @@ func NewFromExistingFiles(name string, hashAlgorithm hashfunc.HashAlgorithm) (
 // ReorgConf - Is a struct used in the call to ReorgFiles holding configuration for the new file structure.
 //   - CollisionResolutionTechnique is the new CRT to use
 //   - NumberOfBucketsNeeded is the new estimated number of buckets needed to store in the hash map files
+//   - RecordsPerBucket is the new number of records per bucket
 //   - KeyExtension is number of bytes to extend the key with
 //   - PrependKeyExtension whether to prepend the extra space or append it
 //   - ValueExtension is number of bytes to extend the value with
@@ -224,6 +237,7 @@ func NewFromExistingFiles(name string, hashAlgorithm hashfunc.HashAlgorithm) (
 type ReorgConf struct {
 	CollisionResolutionTechnique int
 	NumberOfBucketsNeeded        int
+	RecordsPerBucket             int
 	KeyExtension                 int
 	PrependKeyExtension          bool
 	ValueExtension               int
@@ -242,7 +256,7 @@ type ReorgConf struct {
 //
 // The reorganization will happen only if there are detectable changes coming from the ReorgConf struct. If the original
 // file hash map was created with internal hashfunc.HashAlgorithm and an empty (fields are Go zero values) ReorgConf struct is supplied,
-// the function returns with no processing. But values higher than zero in any of CollisionResolutionTechnique, NumberOfBucketsNeeded,
+// the function returns with no processing. But values higher than zero in any of CollisionResolutionTechnique, NumberOfBucketsNeeded, RecordsPerBucket,
 // KeyExtension or ValueExtension will result in processing. Also, if the existing hash file map was created with custom HashAlgorithm and
 // HashAlgorithm is nil, processing will happen. A non nil HashAlgorithm will always result in processing
 // even if the existing file hash map happens to be created with the exact same.
@@ -269,7 +283,7 @@ func ReorgFiles(name string, reorgConf ReorgConf, force bool) (fromHashMapInfo, 
 	// Sort out new settings and also make sure there are any changes at all (unless force flag has already overridden that)
 	hasChanges := force
 	sp := fromFhm.fileManagement.GetStorageParameters()
-	var numberOfBucketsNeeded, keyLength, valueLength, crtType int
+	var numberOfBucketsNeeded, recordsPerBucket, keyLength, valueLength, crtType int
 	var bucketAlgorithm hashfunc.HashAlgorithm
 	if sp.CollisionResolutionTechnique != reorgConf.CollisionResolutionTechnique && reorgConf.CollisionResolutionTechnique > 0 {
 		crtType = reorgConf.CollisionResolutionTechnique
@@ -282,6 +296,12 @@ func ReorgFiles(name string, reorgConf ReorgConf, force bool) (fromHashMapInfo, 
 		hasChanges = true
 	} else {
 		numberOfBucketsNeeded = int(sp.NumberOfBucketsNeeded)
+	}
+	if int(sp.RecordsPerBucket) != reorgConf.RecordsPerBucket && reorgConf.NumberOfBucketsNeeded > 0 {
+		recordsPerBucket = reorgConf.RecordsPerBucket
+		hasChanges = true
+	} else {
+		recordsPerBucket = int(sp.RecordsPerBucket)
 	}
 	if reorgConf.KeyExtension > 0 {
 		keyLength = int(sp.KeyLength) + reorgConf.KeyExtension
@@ -311,7 +331,7 @@ func ReorgFiles(name string, reorgConf ReorgConf, force bool) (fromHashMapInfo, 
 	defer fromFhm.CloseFiles()
 
 	// Create new file hash map
-	toFhm, toHashMapInfo, err = NewFileHashMap(newName, crtType, numberOfBucketsNeeded, keyLength, valueLength, bucketAlgorithm)
+	toFhm, toHashMapInfo, err = NewFileHashMap(newName, crtType, numberOfBucketsNeeded, recordsPerBucket, keyLength, valueLength, bucketAlgorithm)
 	if err != nil {
 		return
 	}
@@ -338,28 +358,30 @@ func reorgRecords(from *FileHashMap, to *FileHashMap, reorgConf ReorgConf, fromN
 		}
 
 		// Record from map file
-		if bucket.Record.State == model.RecordOccupied {
-			key = utils.ExtendByteSlice(bucket.Record.Key, int64(reorgConf.KeyExtension), reorgConf.PrependKeyExtension)
-			value = utils.ExtendByteSlice(bucket.Record.Value, int64(reorgConf.ValueExtension), reorgConf.PrependValueExtension)
-			err = to.Set(key, value)
-			if err != nil {
-				return
-			}
-		}
-
-		// Record from overflow file
-		if iter != nil {
-			for iter.HasNext() {
-				record, err = iter.Next()
+		for _, r := range bucket.Records {
+			if r.State == model.RecordOccupied {
+				key = utils.ExtendByteSlice(r.Key, int64(reorgConf.KeyExtension), reorgConf.PrependKeyExtension)
+				value = utils.ExtendByteSlice(r.Value, int64(reorgConf.ValueExtension), reorgConf.PrependValueExtension)
+				err = to.Set(key, value)
 				if err != nil {
 					return
 				}
-				if record.State == model.RecordOccupied {
-					key = utils.ExtendByteSlice(record.Key, int64(reorgConf.KeyExtension), reorgConf.PrependKeyExtension)
-					value = utils.ExtendByteSlice(record.Value, int64(reorgConf.ValueExtension), reorgConf.PrependValueExtension)
-					err = to.Set(key, value)
+			}
+
+			// Record from overflow file
+			if iter != nil {
+				for iter.HasNext() {
+					record, err = iter.Next()
 					if err != nil {
 						return
+					}
+					if record.State == model.RecordOccupied {
+						key = utils.ExtendByteSlice(record.Key, int64(reorgConf.KeyExtension), reorgConf.PrependKeyExtension)
+						value = utils.ExtendByteSlice(record.Value, int64(reorgConf.ValueExtension), reorgConf.PrependValueExtension)
+						err = to.Set(key, value)
+						if err != nil {
+							return
+						}
 					}
 				}
 			}

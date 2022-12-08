@@ -17,6 +17,7 @@ import (
 type TestCaseOperations struct {
 	crtName     string
 	buckets     int
+	rpb         int
 	keyLength   int
 	valueLength int
 	crt         int
@@ -27,18 +28,18 @@ func TestFileHashMap_Set(t *testing.T) {
 	t.Run("set tests for all CRTs", func(t *testing.T) {
 		// Prepare
 		tests := []TestCaseOperations{
-			{crtName: "SeparateChaining", buckets: 10000, keyLength: 16, valueLength: 10, crt: crt.SeparateChaining},
-			{crtName: "LinearProbing", buckets: 10000, keyLength: 16, valueLength: 10, crt: crt.LinearProbing},
-			{crtName: "QuadraticProbing", buckets: 10000, keyLength: 16, valueLength: 10, crt: crt.QuadraticProbing},
-			{crtName: "DoubleHashing", buckets: 10000, keyLength: 16, valueLength: 10, crt: crt.DoubleHashing},
-			{crtName: "SeparateChainingCustomHash", buckets: 10000, keyLength: 16, valueLength: 10, crt: crt.SeparateChaining, hFunc: NewSeparateChainingHashAlgorithm(10000)},
-			{crtName: "LinearProbingCustomHash", buckets: 10000, keyLength: 16, valueLength: 10, crt: crt.LinearProbing, hFunc: NewLinearProbingHashAlgorithm(10000)},
-			{crtName: "QuadraticProbingCustomHash", buckets: 10000, keyLength: 16, valueLength: 10, crt: crt.QuadraticProbing, hFunc: NewQuadraticProbingHashAlgorithm(10000)},
+			{crtName: "SeparateChaining", buckets: 10000, rpb: 2, keyLength: 16, valueLength: 10, crt: crt.SeparateChaining},
+			{crtName: "LinearProbing", buckets: 10000, rpb: 3, keyLength: 16, valueLength: 10, crt: crt.LinearProbing},
+			{crtName: "QuadraticProbing", buckets: 10000, rpb: 4, keyLength: 16, valueLength: 10, crt: crt.QuadraticProbing},
+			{crtName: "DoubleHashing", buckets: 10000, rpb: 5, keyLength: 16, valueLength: 10, crt: crt.DoubleHashing},
+			{crtName: "SeparateChainingCustomHash", buckets: 10000, rpb: 2, keyLength: 16, valueLength: 10, crt: crt.SeparateChaining, hFunc: NewSeparateChainingHashAlgorithm(10000)},
+			{crtName: "LinearProbingCustomHash", buckets: 10000, rpb: 3, keyLength: 16, valueLength: 10, crt: crt.LinearProbing, hFunc: NewLinearProbingHashAlgorithm(10000)},
+			{crtName: "QuadraticProbingCustomHash", buckets: 10000, rpb: 4, keyLength: 16, valueLength: 10, crt: crt.QuadraticProbing, hFunc: NewQuadraticProbingHashAlgorithm(10000)},
 		}
 
 		for _, test := range tests {
 			t.Run(fmt.Sprintf("sets a new record to file for %s", test.crtName), func(t *testing.T) {
-				fhm, _, err := NewFileHashMap(testHashMap, test.crt, test.buckets, test.keyLength, test.valueLength, test.hFunc)
+				fhm, _, err := NewFileHashMap(testHashMap, test.crt, test.buckets, test.rpb, test.keyLength, test.valueLength, test.hFunc)
 				assert.NoError(t, err, "create new file hash map")
 
 				key := []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
@@ -62,7 +63,7 @@ func TestFileHashMap_Set(t *testing.T) {
 
 			t.Run(fmt.Sprintf("updates an existing record in file for %s", test.crtName), func(t *testing.T) {
 				// Prepare
-				fhm, _, err := NewFileHashMap(testHashMap, test.crt, test.buckets, test.keyLength, test.valueLength, test.hFunc)
+				fhm, _, err := NewFileHashMap(testHashMap, test.crt, test.buckets, test.rpb, test.keyLength, test.valueLength, test.hFunc)
 				assert.NoError(t, err, "create new file hash map")
 
 				key := []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
@@ -94,7 +95,7 @@ func TestFileHashMap_Set(t *testing.T) {
 
 			t.Run(fmt.Sprintf("throws correct error when key is not found for %s", test.crtName), func(t *testing.T) {
 				// Prepare
-				fhm, _, err := NewFileHashMap(testHashMap, test.crt, test.buckets, test.keyLength, test.valueLength, test.hFunc)
+				fhm, _, err := NewFileHashMap(testHashMap, test.crt, test.buckets, test.rpb, test.keyLength, test.valueLength, test.hFunc)
 				assert.NoError(t, err, "create new file hash map struct")
 
 				key := []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
@@ -120,10 +121,11 @@ func TestFileHashMap_Set(t *testing.T) {
 	t.Run("sets records to overflow file", func(t *testing.T) {
 		// Prepare
 		buckets := 10
+		rpb := 1
 		keyLength := 16
 		valueLength := 10
 
-		fhm, _, err := NewFileHashMap(testHashMap, crt.SeparateChaining, buckets, keyLength, valueLength, nil)
+		fhm, _, err := NewFileHashMap(testHashMap, crt.SeparateChaining, buckets, rpb, keyLength, valueLength, nil)
 		assert.NoError(t, err, "create new file hash map struct")
 
 		keys := make([][]byte, 1000)
@@ -172,18 +174,18 @@ func TestPop(t *testing.T) {
 	t.Run("pop tests for all CRTs", func(t *testing.T) {
 		// Prepare
 		tests := []TestCaseOperations{
-			{crtName: "SeparateChaining", buckets: 10, keyLength: 16, valueLength: 10, crt: crt.SeparateChaining},
-			{crtName: "LinearProbing", buckets: 1000, keyLength: 16, valueLength: 10, crt: crt.LinearProbing},
-			{crtName: "QuadraticProbing", buckets: 1000, keyLength: 16, valueLength: 10, crt: crt.QuadraticProbing},
-			{crtName: "DoubleHashing", buckets: 1000, keyLength: 16, valueLength: 10, crt: crt.DoubleHashing},
-			{crtName: "SeparateChainingCustomHash", buckets: 10, keyLength: 16, valueLength: 10, crt: crt.SeparateChaining, hFunc: NewSeparateChainingHashAlgorithm(10)},
-			{crtName: "LinearProbingCustomHash", buckets: 1000, keyLength: 16, valueLength: 10, crt: crt.LinearProbing, hFunc: NewLinearProbingHashAlgorithm(1000)},
-			{crtName: "QuadraticProbingCustomHash", buckets: 1000, keyLength: 16, valueLength: 10, crt: crt.QuadraticProbing, hFunc: NewQuadraticProbingHashAlgorithm(1000)},
+			{crtName: "SeparateChaining", buckets: 10, rpb: 2, keyLength: 16, valueLength: 10, crt: crt.SeparateChaining},
+			{crtName: "LinearProbing", buckets: 1000, rpb: 3, keyLength: 16, valueLength: 10, crt: crt.LinearProbing},
+			{crtName: "QuadraticProbing", buckets: 1000, rpb: 4, keyLength: 16, valueLength: 10, crt: crt.QuadraticProbing},
+			{crtName: "DoubleHashing", buckets: 1000, rpb: 5, keyLength: 16, valueLength: 10, crt: crt.DoubleHashing},
+			{crtName: "SeparateChainingCustomHash", buckets: 10, rpb: 2, keyLength: 16, valueLength: 10, crt: crt.SeparateChaining, hFunc: NewSeparateChainingHashAlgorithm(10)},
+			{crtName: "LinearProbingCustomHash", buckets: 1000, rpb: 3, keyLength: 16, valueLength: 10, crt: crt.LinearProbing, hFunc: NewLinearProbingHashAlgorithm(1000)},
+			{crtName: "QuadraticProbingCustomHash", buckets: 1000, rpb: 4, keyLength: 16, valueLength: 10, crt: crt.QuadraticProbing, hFunc: NewQuadraticProbingHashAlgorithm(1000)},
 		}
 		for _, test := range tests {
 			t.Run(fmt.Sprintf("pops records for %s", test.crtName), func(t *testing.T) {
 				// Prepare
-				fhm, _, err := NewFileHashMap(testHashMap, test.crt, test.buckets, test.keyLength, test.valueLength, test.hFunc)
+				fhm, _, err := NewFileHashMap(testHashMap, test.crt, test.buckets, test.rpb, test.keyLength, test.valueLength, test.hFunc)
 				assert.NoError(t, err, "create new file hash map struct")
 
 				keys := make([][]byte, 1000)
@@ -231,19 +233,19 @@ func TestStat(t *testing.T) {
 	t.Run("stat tests for all CRTs", func(t *testing.T) {
 		// Prepare
 		tests := []TestCaseOperations{
-			{crtName: "SeparateChaining", buckets: 1000, keyLength: 16, valueLength: 10, crt: crt.SeparateChaining},
-			{crtName: "LinearProbing", buckets: 1001, keyLength: 16, valueLength: 10, crt: crt.LinearProbing},
-			{crtName: "QuadraticProbing", buckets: 1001, keyLength: 16, valueLength: 10, crt: crt.QuadraticProbing},
-			{crtName: "DoubleHashing", buckets: 1001, keyLength: 16, valueLength: 10, crt: crt.DoubleHashing},
-			{crtName: "SeparateChainingCustomHash", buckets: 1000, keyLength: 16, valueLength: 10, crt: crt.SeparateChaining, hFunc: NewSeparateChainingHashAlgorithm(1000)},
-			{crtName: "LinearProbingCustomHash", buckets: 1001, keyLength: 16, valueLength: 10, crt: crt.LinearProbing, hFunc: NewLinearProbingHashAlgorithm(1001)},
-			{crtName: "QuadraticProbingCustomHash", buckets: 1001, keyLength: 16, valueLength: 10, crt: crt.QuadraticProbing, hFunc: NewQuadraticProbingHashAlgorithm(1001)},
+			{crtName: "SeparateChaining", buckets: 1000, rpb: 2, keyLength: 16, valueLength: 10, crt: crt.SeparateChaining},
+			{crtName: "LinearProbing", buckets: 1001, rpb: 3, keyLength: 16, valueLength: 10, crt: crt.LinearProbing},
+			{crtName: "QuadraticProbing", buckets: 1001, rpb: 4, keyLength: 16, valueLength: 10, crt: crt.QuadraticProbing},
+			{crtName: "DoubleHashing", buckets: 1001, rpb: 5, keyLength: 16, valueLength: 10, crt: crt.DoubleHashing},
+			{crtName: "SeparateChainingCustomHash", buckets: 1000, rpb: 2, keyLength: 16, valueLength: 10, crt: crt.SeparateChaining, hFunc: NewSeparateChainingHashAlgorithm(1000)},
+			{crtName: "LinearProbingCustomHash", buckets: 1001, rpb: 3, keyLength: 16, valueLength: 10, crt: crt.LinearProbing, hFunc: NewLinearProbingHashAlgorithm(1001)},
+			{crtName: "QuadraticProbingCustomHash", buckets: 1001, rpb: 4, keyLength: 16, valueLength: 10, crt: crt.QuadraticProbing, hFunc: NewQuadraticProbingHashAlgorithm(1001)},
 		}
 
 		for _, test := range tests {
 			t.Run(fmt.Sprintf("produces statistics without distribution for %s", test.crtName), func(t *testing.T) {
 				// Prepare
-				fhm, _, err := NewFileHashMap(testHashMap, test.crt, test.buckets, test.keyLength, test.valueLength, test.hFunc)
+				fhm, _, err := NewFileHashMap(testHashMap, test.crt, test.buckets, test.rpb, test.keyLength, test.valueLength, test.hFunc)
 				assert.NoError(t, err, "create new file hash map struct")
 
 				keys := make([][]byte, 1001)
@@ -285,7 +287,7 @@ func TestStat(t *testing.T) {
 
 			t.Run(fmt.Sprintf("produces statistics with distribution for %s", test.crtName), func(t *testing.T) {
 				// Prepare
-				fhm, _, err := NewFileHashMap(testHashMap, test.crt, test.buckets, test.keyLength, test.valueLength, nil)
+				fhm, _, err := NewFileHashMap(testHashMap, test.crt, test.buckets, test.rpb, test.keyLength, test.valueLength, nil)
 				assert.NoError(t, err, "create new file hash map struct")
 
 				keys := make([][]byte, 1001)

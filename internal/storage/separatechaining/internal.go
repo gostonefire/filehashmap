@@ -110,23 +110,24 @@ func (S *SCFiles) createNewOverflowFile() (err error) {
 	return
 }
 
-// getBucketRecord - Returns all records for a given bucket number in a model.Bucket struct
-func (S *SCFiles) getBucketRecord(bucketNo int64) (bucket model.Bucket, err error) {
+// getBucketRecords - Returns all records for a given bucket number in a model.Bucket struct
+func (S *SCFiles) getBucketRecords(bucketNo int64) (bucket model.Bucket, err error) {
 	trueRecordLength := 1 + S.keyLength + S.valueLength // First byte is record state
-	bucketAddress := storage.MapFileHeaderLength + bucketNo*(trueRecordLength+bucketHeaderLength)
+	bucketLength := bucketHeaderLength + trueRecordLength*S.recordsPerBucket
+	bucketAddress := storage.MapFileHeaderLength + bucketNo*bucketLength
 
 	_, err = S.mapFile.Seek(bucketAddress, io.SeekStart)
 	if err != nil {
 		return
 	}
 
-	buf := make([]byte, trueRecordLength+bucketHeaderLength)
+	buf := make([]byte, bucketLength)
 	_, err = S.mapFile.Read(buf)
 	if err != nil {
 		return
 	}
 
-	bucket, err = bytesToBucket(buf, bucketAddress, S.keyLength, S.valueLength)
+	bucket, err = bytesToBucket(buf, bucketAddress, S.recordsPerBucket, S.keyLength, S.valueLength)
 
 	return
 }
@@ -222,7 +223,7 @@ func (S *SCFiles) appendOverflowRecord(linkingRecord model.Record, key, value []
 
 // getBucketNo - Returns which bucket number that the given key results in
 func (S *SCFiles) getBucketNo(key []byte) (bucketNo int64, err error) {
-	bucketNo = S.hashAlgorithm.HashFunc1(key) - S.minBucketNo
+	bucketNo = S.hashAlgorithm.HashFunc1(key)
 	if bucketNo < 0 || bucketNo >= S.numberOfBucketsAvailable {
 		err = fmt.Errorf("recieved bucket number from bucket algorithm is outside permitted range")
 		return
@@ -259,6 +260,7 @@ func (S *SCFiles) createHeader() (header storage.Header) {
 		ValueLength:                  S.valueLength,
 		NumberOfBucketsNeeded:        S.numberOfBucketsNeeded,
 		NumberOfBucketsAvailable:     S.numberOfBucketsAvailable,
+		RecordsPerBucket:             S.recordsPerBucket,
 		MaxBucketNo:                  S.maxBucketNo,
 		FileSize:                     S.mapFileSize,
 		CollisionResolutionTechnique: int64(crt.SeparateChaining),

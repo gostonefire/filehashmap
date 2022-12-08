@@ -24,7 +24,7 @@ type SCFiles struct {
 	valueLength              int64
 	numberOfBucketsNeeded    int64
 	numberOfBucketsAvailable int64
-	minBucketNo              int64
+	recordsPerBucket         int64
 	maxBucketNo              int64
 	mapFileSize              int64
 	hashAlgorithm            hashfunc.HashAlgorithm
@@ -49,7 +49,8 @@ func NewSCFiles(crtConf model.CRTConf) (scFiles *SCFiles, err error) {
 	}
 
 	// Calculate the hash map file various parameters
-	bucketLength := bucketHeaderLength + 1 + crtConf.KeyLength + crtConf.ValueLength // First byte is record state
+	recordLength := 1 + crtConf.KeyLength + crtConf.ValueLength // First byte is record state
+	bucketLength := bucketHeaderLength + recordLength*crtConf.RecordsPerBucket
 	maxBucketNo := crtConf.HashAlgorithm.GetTableSize() - 1
 	numberOfBuckets := maxBucketNo + 1
 	fileSize := bucketLength*numberOfBuckets + storage.MapFileHeaderLength
@@ -61,6 +62,7 @@ func NewSCFiles(crtConf model.CRTConf) (scFiles *SCFiles, err error) {
 		valueLength:              crtConf.ValueLength,
 		numberOfBucketsNeeded:    crtConf.NumberOfBucketsNeeded,
 		numberOfBucketsAvailable: numberOfBuckets,
+		recordsPerBucket:         crtConf.RecordsPerBucket,
 		maxBucketNo:              maxBucketNo,
 		mapFileSize:              fileSize,
 		hashAlgorithm:            crtConf.HashAlgorithm,
@@ -125,11 +127,11 @@ func NewSCFilesFromExistingFiles(name string, hashAlgorithm hashfunc.HashAlgorit
 		hashAlgorithm.SetTableSize(header.NumberOfBucketsNeeded)
 	}
 
-	//scFiles.initialUniqueKeys = header.NumberOfBucketsNeeded
 	scFiles.keyLength = header.KeyLength
 	scFiles.valueLength = header.ValueLength
 	scFiles.numberOfBucketsNeeded = header.NumberOfBucketsNeeded
 	scFiles.numberOfBucketsAvailable = header.NumberOfBucketsAvailable
+	scFiles.recordsPerBucket = header.RecordsPerBucket
 	scFiles.maxBucketNo = header.MaxBucketNo
 	scFiles.mapFileSize = header.FileSize
 	scFiles.hashAlgorithm = hashAlgorithm
@@ -184,6 +186,7 @@ func (S *SCFiles) GetStorageParameters() (params model.StorageParameters) {
 		ValueLength:                  S.valueLength,
 		NumberOfBucketsNeeded:        S.numberOfBucketsNeeded,
 		NumberOfBucketsAvailable:     S.numberOfBucketsAvailable,
+		RecordsPerBucket:             S.recordsPerBucket,
 		MapFileSize:                  S.mapFileSize,
 		InternalAlgorithm:            S.internalAlgorithm,
 	}
@@ -200,7 +203,7 @@ func (S *SCFiles) GetStorageParameters() (params model.StorageParameters) {
 //   - err is standard error
 func (S *SCFiles) GetBucket(bucketNo int64) (bucket model.Bucket, overflowIterator *overflow.Records, err error) {
 	// Get current contents from within the bucket
-	bucket, err = S.getBucketRecord(bucketNo)
+	bucket, err = S.getBucketRecords(bucketNo)
 	if err != nil {
 		err = fmt.Errorf("error while getting existing bucket records from hash map file: %s", err)
 		return
@@ -238,9 +241,10 @@ func (S *SCFiles) Get(keyRecord model.Record) (record model.Record, err error) {
 	}
 
 	// Sort out record with correct key
-	if bucket.Record.State == model.RecordOccupied && utils.IsEqual(keyRecord.Key, bucket.Record.Key) {
-		record = bucket.Record
-		return
+	for _, record = range bucket.Records {
+		if record.State == model.RecordOccupied && utils.IsEqual(keyRecord.Key, record.Key) {
+			return
+		}
 	}
 
 	// Check if record may be in overflow file
@@ -292,18 +296,21 @@ func (S *SCFiles) Set(record model.Record) (err error) {
 	// If we have a deleted record then save that for potential later use, but we have to search in overflow file as well.
 	var hasDeleted bool
 	var deletedRecord, ovflRecord model.Record
-	if (bucket.Record.State == model.RecordOccupied && utils.IsEqual(record.Key, bucket.Record.Key)) || bucket.Record.State == model.RecordEmpty {
-		bucket.Record.State = model.RecordOccupied
-		bucket.Record.Key = record.Key
-		bucket.Record.Value = record.Value
-		err = S.setBucketRecord(bucket.Record)
-		if err != nil {
-			err = fmt.Errorf("error while updating or adding record to bucket or overflow: %s", err)
+
+	for _, r := range bucket.Records {
+		if (r.State == model.RecordOccupied && utils.IsEqual(record.Key, r.Key)) || r.State == model.RecordEmpty {
+			r.State = model.RecordOccupied
+			r.Key = record.Key
+			r.Value = record.Value
+			err = S.setBucketRecord(r)
+			if err != nil {
+				err = fmt.Errorf("error while updating or adding record to bucket or overflow: %s", err)
+			}
+			return
+		} else if r.State == model.RecordDeleted {
+			hasDeleted = true
+			deletedRecord = r
 		}
-		return
-	} else if bucket.Record.State == model.RecordDeleted {
-		hasDeleted = true
-		deletedRecord = bucket.Record
 	}
 
 	// Search through all overflow records until we find a matching record, in the process save first deleted record for

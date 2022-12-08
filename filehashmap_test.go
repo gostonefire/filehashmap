@@ -19,6 +19,8 @@ type TestCaseFileHashMap struct {
 	crtFromName string
 	toBuckets   int
 	fromBuckets int
+	toRpb       int
+	fromRpb     int
 	keyLength   int
 	valueLength int
 	toCrt       int
@@ -29,9 +31,10 @@ func TestNewFileHashMap(t *testing.T) {
 	t.Run("NewFileHashMap tests for all CRTs", func(t *testing.T) {
 		// Prepare
 		tests := []TestCaseFileHashMap{
-			{crtToName: "SeparateChaining", toBuckets: 100000, keyLength: 16, valueLength: 10, toCrt: crt.SeparateChaining},
-			{crtToName: "LinearProbing", toBuckets: 100000, keyLength: 16, valueLength: 10, toCrt: crt.LinearProbing},
-			{crtToName: "QuadraticProbing", toBuckets: 100000, keyLength: 16, valueLength: 10, toCrt: crt.QuadraticProbing},
+			{crtToName: "SeparateChaining", toBuckets: 100000, toRpb: 1, keyLength: 16, valueLength: 10, toCrt: crt.SeparateChaining},
+			{crtToName: "LinearProbing", toBuckets: 100000, toRpb: 2, keyLength: 16, valueLength: 10, toCrt: crt.LinearProbing},
+			{crtToName: "QuadraticProbing", toBuckets: 100000, toRpb: 3, keyLength: 16, valueLength: 10, toCrt: crt.QuadraticProbing},
+			{crtToName: "DoubleHashing", toBuckets: 100000, toRpb: 4, keyLength: 16, valueLength: 10, toCrt: crt.DoubleHashing},
 		}
 
 		for _, test := range tests {
@@ -39,7 +42,7 @@ func TestNewFileHashMap(t *testing.T) {
 				// Prepare
 
 				// Execute
-				fhm, info, err := NewFileHashMap(testHashMap, test.toCrt, test.toBuckets, test.keyLength, test.valueLength, nil)
+				fhm, info, err := NewFileHashMap(testHashMap, test.toCrt, test.toBuckets, test.toRpb, test.keyLength, test.valueLength, nil)
 
 				// Check
 				assert.NoError(t, err, "creates file hash map")
@@ -49,6 +52,7 @@ func TestNewFileHashMap(t *testing.T) {
 				sp := fhm.fileManagement.GetStorageParameters()
 				assert.Equal(t, int(sp.NumberOfBucketsNeeded), info.NumberOfBucketsNeeded, "correct number of buckets needed in info")
 				assert.Equal(t, int(sp.NumberOfBucketsAvailable), info.NumberOfBucketsAvailable, "correct number of buckets available in info")
+				assert.Equal(t, int64(test.toRpb), sp.RecordsPerBucket, "correct number of records per bucket")
 				assert.Equal(t, int(sp.MapFileSize), info.FileSize, "correct filesize in info")
 				assert.Equal(t, int64(test.toBuckets), sp.NumberOfBucketsNeeded, "correct buckets needed")
 				assert.Equal(t, int64(test.keyLength), sp.KeyLength, "correct key length")
@@ -69,13 +73,13 @@ func TestNewFileHashMap(t *testing.T) {
 
 	t.Run("error when supplying an invalid crt", func(t *testing.T) {
 		// Execute
-		_, _, err := NewFileHashMap(testHashMap, 0, 10, 16, 10, nil)
+		_, _, err := NewFileHashMap(testHashMap, 0, 10, 1, 16, 10, nil)
 
 		// Check
 		assert.Error(t, err)
 
 		// Execute
-		_, _, err = NewFileHashMap(testHashMap, 5, 10, 16, 10, nil)
+		_, _, err = NewFileHashMap(testHashMap, 5, 10, 1, 16, 10, nil)
 
 		// Check
 		assert.Error(t, err)
@@ -83,7 +87,7 @@ func TestNewFileHashMap(t *testing.T) {
 
 	t.Run("error when supplying an invalid key length", func(t *testing.T) {
 		// Execute
-		_, _, err := NewFileHashMap(testHashMap, crt.SeparateChaining, 10, -2, 10, nil)
+		_, _, err := NewFileHashMap(testHashMap, crt.SeparateChaining, 10, 1, -2, 10, nil)
 
 		// Check
 		assert.Error(t, err)
@@ -91,7 +95,7 @@ func TestNewFileHashMap(t *testing.T) {
 
 	t.Run("error when supplying an invalid value length", func(t *testing.T) {
 		// Execute
-		_, _, err := NewFileHashMap(testHashMap, crt.SeparateChaining, 10, 16, 0, nil)
+		_, _, err := NewFileHashMap(testHashMap, crt.SeparateChaining, 10, 1, 16, 0, nil)
 
 		// Check
 		assert.Error(t, err)
@@ -99,7 +103,7 @@ func TestNewFileHashMap(t *testing.T) {
 
 	t.Run("error when supplying an invalid name", func(t *testing.T) {
 		// Execute
-		_, _, err := NewFileHashMap("", crt.SeparateChaining, 10, 16, 10, nil)
+		_, _, err := NewFileHashMap("", crt.SeparateChaining, 10, 1, 16, 10, nil)
 
 		// Check
 		assert.Error(t, err)
@@ -110,15 +114,16 @@ func TestNewFromExistingFiles(t *testing.T) {
 	t.Run("NewFromExistingFiles tests for all CRTs", func(t *testing.T) {
 		// Prepare
 		tests := []TestCaseFileHashMap{
-			{crtToName: "SeparateChaining", toBuckets: 100000, keyLength: 16, valueLength: 10, toCrt: crt.SeparateChaining},
-			{crtToName: "LinearProbing", toBuckets: 100000, keyLength: 16, valueLength: 10, toCrt: crt.LinearProbing},
-			{crtToName: "QuadraticProbing", toBuckets: 100000, keyLength: 16, valueLength: 10, toCrt: crt.QuadraticProbing},
+			{crtToName: "SeparateChaining", toBuckets: 100000, toRpb: 2, keyLength: 16, valueLength: 10, toCrt: crt.SeparateChaining},
+			{crtToName: "LinearProbing", toBuckets: 100000, toRpb: 3, keyLength: 16, valueLength: 10, toCrt: crt.LinearProbing},
+			{crtToName: "QuadraticProbing", toBuckets: 100000, toRpb: 4, keyLength: 16, valueLength: 10, toCrt: crt.QuadraticProbing},
+			{crtToName: "DoubleHashing", toBuckets: 100000, toRpb: 5, keyLength: 16, valueLength: 10, toCrt: crt.QuadraticProbing},
 		}
 
 		for _, test := range tests {
 			t.Run(fmt.Sprintf("opens an existing file for %s", test.crtToName), func(t *testing.T) {
 				// Prepare
-				fhmInit, infoInit, err := NewFileHashMap(testHashMap, test.toCrt, test.toBuckets, test.keyLength, test.valueLength, nil)
+				fhmInit, infoInit, err := NewFileHashMap(testHashMap, test.toCrt, test.toBuckets, test.toRpb, test.keyLength, test.valueLength, nil)
 				assert.NoError(t, err, "creates file hash map")
 
 				fhmInit.CloseFiles()
@@ -131,6 +136,7 @@ func TestNewFromExistingFiles(t *testing.T) {
 				assert.Equal(t, testHashMap, fhm.name, "correct name")
 				assert.Equal(t, infoInit.NumberOfBucketsNeeded, info.NumberOfBucketsNeeded, "number of buckets needed preserved")
 				assert.Equal(t, infoInit.NumberOfBucketsAvailable, info.NumberOfBucketsAvailable, "number of buckets available preserved")
+				assert.Equal(t, infoInit.TotalRecords, info.TotalRecords, "total records preserved")
 				assert.Equal(t, infoInit.FileSize, info.FileSize, "filesize preserved")
 
 				// Clean up
@@ -158,24 +164,24 @@ func TestReorgFiles(t *testing.T) {
 	t.Run("ReorgFiles tests for all CRTs", func(t *testing.T) {
 		// Prepare
 		tests := []TestCaseFileHashMap{
-			{crtFromName: "SeparateChaining", crtToName: "SeparateChaining", fromBuckets: 10, toBuckets: 100, keyLength: 5, valueLength: 10, fromCrt: crt.SeparateChaining, toCrt: crt.SeparateChaining},
-			{crtFromName: "LinearProbing", crtToName: "LinearProbing", fromBuckets: 100, toBuckets: 100, keyLength: 5, valueLength: 10, fromCrt: crt.LinearProbing, toCrt: crt.LinearProbing},
-			{crtFromName: "QuadraticProbing", crtToName: "QuadraticProbing", fromBuckets: 100, toBuckets: 100, keyLength: 5, valueLength: 10, fromCrt: crt.QuadraticProbing, toCrt: crt.QuadraticProbing},
-			{crtFromName: "DoubleHashing", crtToName: "DoubleHashing", fromBuckets: 100, toBuckets: 100, keyLength: 5, valueLength: 10, fromCrt: crt.DoubleHashing, toCrt: crt.DoubleHashing},
+			{crtFromName: "SeparateChaining", crtToName: "SeparateChaining", fromBuckets: 10, toBuckets: 100, fromRpb: 3, toRpb: 2, keyLength: 5, valueLength: 10, fromCrt: crt.SeparateChaining, toCrt: crt.SeparateChaining},
+			{crtFromName: "LinearProbing", crtToName: "LinearProbing", fromBuckets: 100, toBuckets: 100, fromRpb: 2, toRpb: 4, keyLength: 5, valueLength: 10, fromCrt: crt.LinearProbing, toCrt: crt.LinearProbing},
+			{crtFromName: "QuadraticProbing", crtToName: "QuadraticProbing", fromBuckets: 100, toBuckets: 100, fromRpb: 4, toRpb: 2, keyLength: 5, valueLength: 10, fromCrt: crt.QuadraticProbing, toCrt: crt.QuadraticProbing},
+			{crtFromName: "DoubleHashing", crtToName: "DoubleHashing", fromBuckets: 100, toBuckets: 100, fromRpb: 2, toRpb: 4, keyLength: 5, valueLength: 10, fromCrt: crt.DoubleHashing, toCrt: crt.DoubleHashing},
 
-			{crtFromName: "SeparateChaining", crtToName: "LinearProbing", fromBuckets: 10, toBuckets: 100, keyLength: 5, valueLength: 10, fromCrt: crt.SeparateChaining, toCrt: crt.LinearProbing},
-			{crtFromName: "SeparateChaining", crtToName: "QuadraticProbing", fromBuckets: 10, toBuckets: 100, keyLength: 5, valueLength: 10, fromCrt: crt.SeparateChaining, toCrt: crt.QuadraticProbing},
-			{crtFromName: "SeparateChaining", crtToName: "DoubleHashing", fromBuckets: 10, toBuckets: 100, keyLength: 5, valueLength: 10, fromCrt: crt.SeparateChaining, toCrt: crt.DoubleHashing},
-			{crtFromName: "LinearProbing", crtToName: "QuadraticProbing", fromBuckets: 100, toBuckets: 100, keyLength: 5, valueLength: 10, fromCrt: crt.LinearProbing, toCrt: crt.QuadraticProbing},
-			{crtFromName: "LinearProbing", crtToName: "DoubleHashing", fromBuckets: 100, toBuckets: 100, keyLength: 5, valueLength: 10, fromCrt: crt.LinearProbing, toCrt: crt.DoubleHashing},
-			{crtFromName: "QuadraticProbing", crtToName: "DoubleHashing", fromBuckets: 100, toBuckets: 100, keyLength: 5, valueLength: 10, fromCrt: crt.QuadraticProbing, toCrt: crt.DoubleHashing},
+			{crtFromName: "SeparateChaining", crtToName: "LinearProbing", fromBuckets: 10, toBuckets: 100, fromRpb: 3, toRpb: 3, keyLength: 5, valueLength: 10, fromCrt: crt.SeparateChaining, toCrt: crt.LinearProbing},
+			{crtFromName: "SeparateChaining", crtToName: "QuadraticProbing", fromBuckets: 10, toBuckets: 100, fromRpb: 2, toRpb: 4, keyLength: 5, valueLength: 10, fromCrt: crt.SeparateChaining, toCrt: crt.QuadraticProbing},
+			{crtFromName: "SeparateChaining", crtToName: "DoubleHashing", fromBuckets: 10, toBuckets: 100, fromRpb: 3, toRpb: 3, keyLength: 5, valueLength: 10, fromCrt: crt.SeparateChaining, toCrt: crt.DoubleHashing},
+			{crtFromName: "LinearProbing", crtToName: "QuadraticProbing", fromBuckets: 100, toBuckets: 100, fromRpb: 5, toRpb: 3, keyLength: 5, valueLength: 10, fromCrt: crt.LinearProbing, toCrt: crt.QuadraticProbing},
+			{crtFromName: "LinearProbing", crtToName: "DoubleHashing", fromBuckets: 100, toBuckets: 100, fromRpb: 2, toRpb: 3, keyLength: 5, valueLength: 10, fromCrt: crt.LinearProbing, toCrt: crt.DoubleHashing},
+			{crtFromName: "QuadraticProbing", crtToName: "DoubleHashing", fromBuckets: 100, toBuckets: 100, fromRpb: 4, toRpb: 5, keyLength: 5, valueLength: 10, fromCrt: crt.QuadraticProbing, toCrt: crt.DoubleHashing},
 
-			{crtFromName: "LinearProbing", crtToName: "SeparateChaining", fromBuckets: 100, toBuckets: 10, keyLength: 5, valueLength: 10, fromCrt: crt.LinearProbing, toCrt: crt.SeparateChaining},
-			{crtFromName: "QuadraticProbing", crtToName: "SeparateChaining", fromBuckets: 100, toBuckets: 10, keyLength: 5, valueLength: 10, fromCrt: crt.QuadraticProbing, toCrt: crt.SeparateChaining},
-			{crtFromName: "DoubleHashing", crtToName: "SeparateChaining", fromBuckets: 100, toBuckets: 10, keyLength: 5, valueLength: 10, fromCrt: crt.DoubleHashing, toCrt: crt.SeparateChaining},
-			{crtFromName: "QuadraticProbing", crtToName: "LinearProbing", fromBuckets: 100, toBuckets: 100, keyLength: 5, valueLength: 10, fromCrt: crt.QuadraticProbing, toCrt: crt.LinearProbing},
-			{crtFromName: "DoubleHashing", crtToName: "LinearProbing", fromBuckets: 100, toBuckets: 100, keyLength: 5, valueLength: 10, fromCrt: crt.DoubleHashing, toCrt: crt.LinearProbing},
-			{crtFromName: "DoubleHashing", crtToName: "QuadraticProbing", fromBuckets: 100, toBuckets: 100, keyLength: 5, valueLength: 10, fromCrt: crt.DoubleHashing, toCrt: crt.QuadraticProbing},
+			{crtFromName: "LinearProbing", crtToName: "SeparateChaining", fromBuckets: 100, toBuckets: 10, fromRpb: 2, toRpb: 1, keyLength: 5, valueLength: 10, fromCrt: crt.LinearProbing, toCrt: crt.SeparateChaining},
+			{crtFromName: "QuadraticProbing", crtToName: "SeparateChaining", fromBuckets: 100, toBuckets: 10, fromRpb: 3, toRpb: 2, keyLength: 5, valueLength: 10, fromCrt: crt.QuadraticProbing, toCrt: crt.SeparateChaining},
+			{crtFromName: "DoubleHashing", crtToName: "SeparateChaining", fromBuckets: 100, toBuckets: 10, fromRpb: 4, toRpb: 2, keyLength: 5, valueLength: 10, fromCrt: crt.DoubleHashing, toCrt: crt.SeparateChaining},
+			{crtFromName: "QuadraticProbing", crtToName: "LinearProbing", fromBuckets: 100, toBuckets: 100, fromRpb: 2, toRpb: 3, keyLength: 5, valueLength: 10, fromCrt: crt.QuadraticProbing, toCrt: crt.LinearProbing},
+			{crtFromName: "DoubleHashing", crtToName: "LinearProbing", fromBuckets: 100, toBuckets: 100, fromRpb: 5, toRpb: 4, keyLength: 5, valueLength: 10, fromCrt: crt.DoubleHashing, toCrt: crt.LinearProbing},
+			{crtFromName: "DoubleHashing", crtToName: "QuadraticProbing", fromBuckets: 100, toBuckets: 100, fromRpb: 2, toRpb: 2, keyLength: 5, valueLength: 10, fromCrt: crt.DoubleHashing, toCrt: crt.QuadraticProbing},
 		}
 
 		for _, test := range tests {
@@ -185,10 +191,26 @@ func TestReorgFiles(t *testing.T) {
 				mapFileName := fmt.Sprintf("%s-map.bin", testHashMap)
 				ovflFileName := fmt.Sprintf("%s-ovfl.bin", testHashMap)
 
+				fromRecords := test.fromBuckets * test.fromRpb
+				toRecords := test.toBuckets * test.toRpb
+				var records int
+				if test.fromCrt == crt.SeparateChaining {
+					records = toRecords
+				} else if test.toCrt == crt.SeparateChaining {
+					records = fromRecords
+				} else {
+					if fromRecords < toRecords {
+						records = fromRecords
+					} else {
+						records = toRecords
+					}
+
+				}
+
 				rand.Seed(123)
-				keys := make([][]byte, 100)
-				values := make([][]byte, 100)
-				for i := 0; i < 100; i++ {
+				keys := make([][]byte, records)
+				values := make([][]byte, records)
+				for i := 0; i < records; i++ {
 					key := make([]byte, 5)
 					rand.Read(key)
 					keys[i] = key
@@ -197,10 +219,10 @@ func TestReorgFiles(t *testing.T) {
 					values[i] = value
 				}
 
-				fhm, _, err := NewFileHashMap(testHashMap, test.fromCrt, test.fromBuckets, test.keyLength, test.valueLength, nil)
+				fhm, _, err := NewFileHashMap(testHashMap, test.fromCrt, test.fromBuckets, test.fromRpb, test.keyLength, test.valueLength, nil)
 				assert.NoError(t, err, "create fil hash map")
 
-				for i := 0; i < 100; i++ {
+				for i := 0; i < records; i++ {
 					err = fhm.Set(keys[i], values[i])
 					assert.NoError(t, err, "set key/value in file hash map")
 				}
@@ -210,6 +232,7 @@ func TestReorgFiles(t *testing.T) {
 				reorgConf := ReorgConf{
 					CollisionResolutionTechnique: test.toCrt,
 					NumberOfBucketsNeeded:        test.toBuckets,
+					RecordsPerBucket:             test.toRpb,
 					KeyExtension:                 5,
 					PrependKeyExtension:          false,
 					ValueExtension:               10,
@@ -227,7 +250,7 @@ func TestReorgFiles(t *testing.T) {
 				fhm, _, err = NewFromExistingFiles(newName, nil)
 				assert.NoError(t, err, "open reorged files")
 
-				for i := 0; i < 100; i++ {
+				for i := 0; i < records; i++ {
 					key := make([]byte, len(keys[i]))
 					valueToBe := make([]byte, len(values[i]))
 					_ = copy(key, keys[i])

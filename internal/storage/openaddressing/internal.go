@@ -69,23 +69,24 @@ func (Q *OAFiles) openHashMapFile() (header storage.Header, err error) {
 	return
 }
 
-// getBucketRecord - Returns record for a given bucket number in a model.Bucket struct
-func (Q *OAFiles) getBucketRecord(bucketNo int64) (bucket model.Bucket, err error) {
+// getBucketRecords - Returns record for a given bucket number in a model.Bucket struct
+func (Q *OAFiles) getBucketRecords(bucketNo int64) (bucket model.Bucket, err error) {
 	trueRecordLength := 1 + Q.keyLength + Q.valueLength // First byte is record state
-	bucketAddress := storage.MapFileHeaderLength + bucketNo*trueRecordLength
+	bucketLength := trueRecordLength * Q.recordsPerBucket
+	bucketAddress := storage.MapFileHeaderLength + bucketNo*bucketLength
 
 	_, err = Q.mapFile.Seek(bucketAddress, io.SeekStart)
 	if err != nil {
 		return
 	}
 
-	buf := make([]byte, trueRecordLength)
+	buf := make([]byte, bucketLength)
 	_, err = Q.mapFile.Read(buf)
 	if err != nil {
 		return
 	}
 
-	bucket, err = Q.bytesToBucket(buf, bucketAddress)
+	bucket, err = Q.bytesToBucket(buf, bucketAddress, Q.recordsPerBucket)
 
 	return
 }
@@ -109,22 +110,37 @@ func (Q *OAFiles) setBucketRecord(record model.Record) (err error) {
 }
 
 // bytesToBucket - Converts bucket raw data to a Bucket struct
-func (Q *OAFiles) bytesToBucket(buf []byte, bucketAddress int64) (bucket model.Bucket, err error) {
-	keyStart := int64(1) // First byte is record state
-	valueStart := keyStart + Q.keyLength
+func (Q *OAFiles) bytesToBucket(buf []byte, bucketAddress, recordsPerBucket int64) (bucket model.Bucket, err error) {
+	records := make([]model.Record, recordsPerBucket)
 
-	key := make([]byte, Q.keyLength)
-	value := make([]byte, Q.valueLength)
-	_ = copy(key, buf[keyStart:keyStart+Q.keyLength])
-	_ = copy(value, buf[valueStart:valueStart+Q.valueLength])
+	recordLength := 1 + Q.keyLength + Q.valueLength // First byte is record state
+	bucketLength := recordLength * recordsPerBucket
 
-	bucket = model.Bucket{
-		Record: model.Record{
-			State:         buf[0],
-			RecordAddress: bucketAddress,
+	var key, value []byte
+	var keyStart, valueStart, n int64
+
+	for i := int64(0); i < bucketLength; i += recordLength {
+		keyStart = i + 1
+		valueStart = keyStart + Q.keyLength
+
+		key = make([]byte, Q.keyLength)
+		value = make([]byte, Q.valueLength)
+		_ = copy(key, buf[keyStart:keyStart+Q.keyLength])
+		_ = copy(value, buf[valueStart:valueStart+Q.valueLength])
+
+		records[n] = model.Record{
+			State:         buf[i],
+			IsOverflow:    false,
+			RecordAddress: bucketAddress + i,
 			Key:           key,
 			Value:         value,
-		},
+		}
+
+		n++
+	}
+
+	bucket = model.Bucket{
+		Records:         records,
 		BucketAddress:   bucketAddress,
 		OverflowAddress: 0,
 		HasOverflow:     false,
@@ -141,6 +157,7 @@ func (Q *OAFiles) createHeader() (header storage.Header) {
 		ValueLength:                  Q.valueLength,
 		NumberOfBucketsNeeded:        Q.numberOfBucketsNeeded,
 		NumberOfBucketsAvailable:     Q.numberOfBucketsAvailable,
+		RecordsPerBucket:             Q.recordsPerBucket,
 		MaxBucketNo:                  Q.maxBucketNo,
 		FileSize:                     Q.mapFileSize,
 		CollisionResolutionTechnique: int64(Q.CollisionResolutionTechnique),
@@ -162,22 +179,24 @@ func (Q *OAFiles) probingForGet(key []byte) (record model.Record, err error) {
 	for i := int64(0); i < iMax; i++ {
 		probe = Q.hashAlgorithm.ProbeIteration(hf1Value, hf2Value, i)
 		if probe < Q.numberOfBucketsAvailable && probe >= 0 {
-			bucket, err = Q.getBucketRecord(probe)
+			bucket, err = Q.getBucketRecords(probe)
 			if err != nil {
 				err = fmt.Errorf("error while reading bucket from file: %s", err)
 				return
 			}
 
-			switch bucket.Record.State {
-			case model.RecordEmpty:
-				record = model.Record{}
-				err = crt.NoRecordFound{}
-				return
-
-			case model.RecordOccupied:
-				if utils.IsEqual(key, bucket.Record.Key) {
-					record = bucket.Record
+			for _, r := range bucket.Records {
+				switch r.State {
+				case model.RecordEmpty:
+					record = model.Record{}
+					err = crt.NoRecordFound{}
 					return
+
+				case model.RecordOccupied:
+					if utils.IsEqual(key, r.Key) {
+						record = r
+						return
+					}
 				}
 			}
 
@@ -213,32 +232,34 @@ func (Q *OAFiles) probingForSet(key []byte) (record model.Record, err error) {
 	for i := int64(0); i < iMax; i++ {
 		probe = Q.hashAlgorithm.ProbeIteration(hf1Value, hf2Value, i)
 		if probe < Q.numberOfBucketsAvailable && probe >= 0 {
-			bucket, err = Q.getBucketRecord(probe)
+			bucket, err = Q.getBucketRecords(probe)
 			if err != nil {
 				err = fmt.Errorf("error while reading bucket from file: %s", err)
 				return
 			}
 
-			switch bucket.Record.State {
-			case model.RecordEmpty:
-				if hasCached {
-					record = deletedRecord
+			for _, r := range bucket.Records {
+				switch r.State {
+				case model.RecordEmpty:
+					if hasCached {
+						record = deletedRecord
+						return
+					} else {
+						record = r
+					}
 					return
-				} else {
-					record = bucket.Record
-				}
-				return
 
-			case model.RecordOccupied:
-				if utils.IsEqual(key, bucket.Record.Key) {
-					record = bucket.Record
-					return
-				}
+				case model.RecordOccupied:
+					if utils.IsEqual(key, r.Key) {
+						record = r
+						return
+					}
 
-			case model.RecordDeleted:
-				if !hasCached {
-					deletedRecord = bucket.Record
-					hasCached = true
+				case model.RecordDeleted:
+					if !hasCached {
+						deletedRecord = r
+						hasCached = true
+					}
 				}
 			}
 

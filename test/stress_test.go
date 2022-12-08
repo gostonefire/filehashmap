@@ -165,6 +165,7 @@ func getTestdata(fileName string, fhm *filehashmap.FileHashMap, shouldNotExist b
 type TestCaseStressTest struct {
 	crtName     string
 	buckets     int
+	rpb         int
 	keyLength   int
 	valueLength int
 	crt         int
@@ -175,10 +176,10 @@ func TestStress(t *testing.T) {
 	t.Run("stress tests for all CRTs", func(t *testing.T) {
 		// Prepare
 		tests := []TestCaseStressTest{
-			{crtName: "SeparateChaining", buckets: 1000000, keyLength: 20, valueLength: 10, crt: crt.SeparateChaining, nTestdata: 1000000},
-			{crtName: "LinearProbing", buckets: 266666, keyLength: 20, valueLength: 10, crt: crt.LinearProbing, nTestdata: 100000},
-			{crtName: "QuadraticProbing", buckets: 266666, keyLength: 20, valueLength: 10, crt: crt.QuadraticProbing, nTestdata: 100000},
-			{crtName: "DoubleHashing", buckets: 266666, keyLength: 20, valueLength: 10, crt: crt.DoubleHashing, nTestdata: 100000},
+			{crtName: "SeparateChaining", buckets: 1000000, rpb: 1, keyLength: 20, valueLength: 10, crt: crt.SeparateChaining, nTestdata: 1000000},
+			{crtName: "LinearProbing", buckets: 266666, rpb: 2, keyLength: 20, valueLength: 10, crt: crt.LinearProbing, nTestdata: 200000},
+			{crtName: "QuadraticProbing", buckets: 266666, rpb: 2, keyLength: 20, valueLength: 10, crt: crt.QuadraticProbing, nTestdata: 200000},
+			{crtName: "DoubleHashing", buckets: 266666, rpb: 2, keyLength: 20, valueLength: 10, crt: crt.DoubleHashing, nTestdata: 200000},
 		}
 
 		for _, test := range tests {
@@ -195,7 +196,7 @@ func TestStress(t *testing.T) {
 				// Prepare file hash map
 				var fhm *filehashmap.FileHashMap
 
-				fhm, _, err = filehashmap.NewFileHashMap("test", test.crt, test.buckets, test.keyLength, test.valueLength, nil)
+				fhm, _, err = filehashmap.NewFileHashMap("test", test.crt, test.buckets, test.rpb, test.keyLength, test.valueLength, nil)
 				assert.NoError(t, err, "create file hash map")
 
 				// Set first two sets of test data
