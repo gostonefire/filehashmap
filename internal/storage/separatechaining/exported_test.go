@@ -41,9 +41,6 @@ func TestNewSCFiles(t *testing.T) {
 		assert.NotZero(t, scFiles.maxBucketNo, "max bucket number is not zero")
 		assert.Equal(t, scFiles.mapFileSize, mapFileSize, "map file in correct size")
 		assert.NotNil(t, scFiles.hashAlgorithm, "hash algorithm is assigned")
-		assert.Equal(t, scFiles.numberOfBucketsAvailable, scFiles.nEmpty, "all buckets empty")
-		assert.Zero(t, scFiles.nOccupied, "no occupied buckets")
-		assert.Zero(t, scFiles.nDeleted, "no deleted buckets")
 
 		stat, err := os.Stat(scFiles.mapFileName)
 		assert.NoError(t, err, "map file exists")
@@ -96,9 +93,6 @@ func TestNewSCFilesFromExistingFiles(t *testing.T) {
 		assert.NotZero(t, scFiles.maxBucketNo, "max bucket number is not zero")
 		assert.Equal(t, scFiles.mapFileSize, mapFileSize, "map file in correct size")
 		assert.NotNil(t, scFiles.hashAlgorithm, "hash algorithm is assigned")
-		assert.Equal(t, scFiles.numberOfBucketsAvailable, scFiles.nEmpty, "all buckets empty")
-		assert.Zero(t, scFiles.nOccupied, "no occupied buckets")
-		assert.Zero(t, scFiles.nDeleted, "no deleted buckets")
 
 		// Clean up
 		scFiles.CloseFiles()

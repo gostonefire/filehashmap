@@ -61,24 +61,6 @@ func (Q *OAFiles) openHashMapFile() (header storage.Header, err error) {
 			return
 		}
 
-		// Check if we need update header with hash map utilization info
-		if header.FileCloseDate == 0 {
-			header, err = storage.GetFileUtilization(Q.mapFile, 0, header)
-			if err != nil {
-				_ = Q.mapFile.Close()
-				Q.mapFile = nil
-				return
-			}
-		} else {
-			err = storage.SetFileCloseDate(Q.mapFile, true)
-			if err != nil {
-				_ = Q.mapFile.Close()
-				Q.mapFile = nil
-				err = fmt.Errorf("error when trying to write to hash map file")
-				return
-			}
-		}
-
 	} else {
 		err = fmt.Errorf("hash map file not found")
 		return
@@ -162,35 +144,9 @@ func (Q *OAFiles) createHeader() (header storage.Header) {
 		MaxBucketNo:                  Q.maxBucketNo,
 		FileSize:                     Q.mapFileSize,
 		CollisionResolutionTechnique: int64(Q.CollisionResolutionTechnique),
-		NumberOfEmptyRecords:         Q.nEmpty,
-		NumberOfOccupiedRecords:      Q.nOccupied,
-		NumberOfDeletedRecords:       Q.nDeleted,
 	}
 
 	return
-}
-
-// updateUtilizationInfo - Updates information about current utilization
-func (Q *OAFiles) updateUtilizationInfo(fromState, toState uint8) {
-	if fromState != toState {
-		switch fromState {
-		case model.RecordEmpty:
-			Q.nEmpty--
-		case model.RecordOccupied:
-			Q.nOccupied--
-		case model.RecordDeleted:
-			Q.nDeleted--
-		}
-
-		switch toState {
-		case model.RecordEmpty:
-			Q.nEmpty++
-		case model.RecordOccupied:
-			Q.nOccupied++
-		case model.RecordDeleted:
-			Q.nDeleted++
-		}
-	}
 }
 
 // probingForGet - Is the Probing Collision Resolution Technique algorithm for getting a record.

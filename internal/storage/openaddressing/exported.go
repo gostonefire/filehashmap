@@ -27,9 +27,6 @@ type OAFiles struct {
 	hashAlgorithm                hashfunc.HashAlgorithm
 	internalAlgorithm            bool
 	CollisionResolutionTechnique int
-	nEmpty                       int64
-	nOccupied                    int64
-	nDeleted                     int64
 }
 
 // NewOAFiles - Returns a pointer to a new instance of Open Addressing file implementation.
@@ -73,9 +70,6 @@ func NewOAFiles(crtConf model.CRTConf) (oaFiles *OAFiles, err error) {
 		hashAlgorithm:                crtConf.HashAlgorithm,
 		internalAlgorithm:            internalAlg,
 		CollisionResolutionTechnique: crtConf.CollisionResolutionTechnique,
-		nEmpty:                       numberOfBuckets,
-		nOccupied:                    0,
-		nDeleted:                     0,
 	}
 
 	header := oaFiles.createHeader()
@@ -143,9 +137,6 @@ func NewOAFilesFromExistingFiles(name string, hashAlgorithm hashfunc.HashAlgorit
 	oaFiles.hashAlgorithm = hashAlgorithm
 	oaFiles.internalAlgorithm = internalAlg
 	oaFiles.CollisionResolutionTechnique = int(header.CollisionResolutionTechnique)
-	oaFiles.nEmpty = header.NumberOfEmptyRecords
-	oaFiles.nOccupied = header.NumberOfOccupiedRecords
-	oaFiles.nDeleted = header.NumberOfDeletedRecords
 
 	return
 }
@@ -153,11 +144,6 @@ func NewOAFilesFromExistingFiles(name string, hashAlgorithm hashfunc.HashAlgorit
 // CloseFiles - Closes the map files
 func (Q *OAFiles) CloseFiles() {
 	if Q.mapFile != nil {
-		header := Q.createHeader()
-		err := storage.SetHeader(Q.mapFile, header)
-		if err == nil {
-			_ = storage.SetFileCloseDate(Q.mapFile, false)
-		}
 		_ = Q.mapFile.Sync()
 		_ = Q.mapFile.Close()
 	}
@@ -255,7 +241,6 @@ func (Q *OAFiles) Set(record model.Record) (err error) {
 		return
 	}
 
-	fromState := selectedRecord.State
 	selectedRecord.State = model.RecordOccupied
 	selectedRecord.Key = record.Key
 	selectedRecord.Value = record.Value
@@ -266,8 +251,6 @@ func (Q *OAFiles) Set(record model.Record) (err error) {
 		return
 	}
 
-	Q.updateUtilizationInfo(fromState, selectedRecord.State)
-
 	return
 }
 
@@ -277,7 +260,6 @@ func (Q *OAFiles) Set(record model.Record) (err error) {
 // It returns:
 //   - err is a standard error, if something went wrong
 func (Q *OAFiles) Delete(record model.Record) (err error) {
-	fromState := record.State
 	record.State = model.RecordDeleted
 	record.Key = make([]byte, Q.keyLength)
 	record.Value = make([]byte, Q.valueLength)
@@ -285,8 +267,6 @@ func (Q *OAFiles) Delete(record model.Record) (err error) {
 	err = Q.setBucketRecord(record)
 	if err != nil {
 		err = fmt.Errorf("error while updating record in bucket: %s", err)
-	} else {
-		Q.updateUtilizationInfo(fromState, record.State)
 	}
 
 	return

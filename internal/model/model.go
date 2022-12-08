@@ -1,6 +1,6 @@
 package model
 
-import hashfunc "github.com/gostonefire/filehashmap/hashfunc"
+import "github.com/gostonefire/filehashmap/hashfunc"
 
 // RecordEmpty - State indicating a record that is or has never been in use
 const RecordEmpty uint8 = 0

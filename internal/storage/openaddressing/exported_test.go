@@ -57,9 +57,6 @@ func TestNewOAFiles(t *testing.T) {
 				assert.NotZero(t, oaFiles.maxBucketNo, "max bucket number is not zero")
 				assert.Equal(t, oaFiles.mapFileSize, mapFileSize, "map file size in correct length")
 				assert.NotNil(t, oaFiles.hashAlgorithm, "hash algorithm is assigned")
-				assert.Equal(t, oaFiles.numberOfBucketsAvailable, oaFiles.nEmpty, "all buckets empty")
-				assert.Zero(t, oaFiles.nOccupied, "no occupied buckets")
-				assert.Zero(t, oaFiles.nDeleted, "no deleted buckets")
 
 				stat, err := os.Stat(oaFiles.mapFileName)
 				assert.NoError(t, err, "map file exists")
@@ -117,9 +114,6 @@ func TestNewOAFilesFromExistingFiles(t *testing.T) {
 				assert.NotZero(t, oaFiles.maxBucketNo, "max bucket number is not zero")
 				assert.Equal(t, oaFiles.mapFileSize, mapFileSize, "map file size in correct length")
 				assert.NotNil(t, oaFiles.hashAlgorithm, "hash algorithm is assigned")
-				assert.Equal(t, oaFiles.numberOfBucketsAvailable, oaFiles.nEmpty, "all buckets empty")
-				assert.Zero(t, oaFiles.nOccupied, "no occupied buckets")
-				assert.Zero(t, oaFiles.nDeleted, "no deleted buckets")
 
 				// Clean up
 				oaFiles.CloseFiles()

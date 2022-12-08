@@ -58,10 +58,11 @@ type FileHashMap struct {
 }
 
 // NewFileHashMap - Returns a new file (or set of files) prepared to cover a number of unique values in buckets.
-// If the number is too low or the spread of the values are not uniform it may be that buckets will be overfilled.
-// An overfilled bucket will result in data put in an overflow file which will still work but requires more
-// disk operations.
+// If the number is too low or the spread of the values are not uniform it may be that buckets will be overfilled or
+// lead to collisions needed to be resolved. In a collision situation the chosen crtType will dictate what measures to
+// take (either using a linked list in overflow file or probe for a free spot).
 //   - name is the name of the file hash map and will be used to form file name(s)
+//   - crtType is the collision resolution technique to use in the new file hash map
 //   - bucketsNeeded is the max number of buckets needed, but depending on hash algorithm it may result in a different number of actual available buckets.
 //   - keyLength is the length of the key part in a record
 //   - valueLength is the length of the value part in a record
@@ -236,7 +237,7 @@ type ReorgConf struct {
 // in overflow, or we need to store more data in each record, or perhaps a better hash algorithm has been found
 // for the particular set of data we are processing.
 //
-// The function will first rename the old files by inserting "-original", then create new files. The old files will
+// The function will create new files with a -reorg inserted in the name(s). The old files will
 // not be deleted to prevent data loss due to mistakes.
 //
 // The reorganization will happen only if there are detectable changes coming from the ReorgConf struct. If the original

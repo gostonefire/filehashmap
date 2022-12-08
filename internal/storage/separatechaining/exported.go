@@ -3,7 +3,7 @@ package separatechaining
 import (
 	"fmt"
 	"github.com/gostonefire/filehashmap/crt"
-	hashfunc "github.com/gostonefire/filehashmap/hashfunc"
+	"github.com/gostonefire/filehashmap/hashfunc"
 	"github.com/gostonefire/filehashmap/internal/hash"
 	"github.com/gostonefire/filehashmap/internal/model"
 	"github.com/gostonefire/filehashmap/internal/overflow"
@@ -29,9 +29,6 @@ type SCFiles struct {
 	mapFileSize              int64
 	hashAlgorithm            hashfunc.HashAlgorithm
 	internalAlgorithm        bool
-	nEmpty                   int64
-	nOccupied                int64
-	nDeleted                 int64
 }
 
 // NewSCFiles - Returns a pointer to a new instance of Separate Chaining file implementation.
@@ -68,9 +65,6 @@ func NewSCFiles(crtConf model.CRTConf) (scFiles *SCFiles, err error) {
 		mapFileSize:              fileSize,
 		hashAlgorithm:            crtConf.HashAlgorithm,
 		internalAlgorithm:        internalAlg,
-		nEmpty:                   numberOfBuckets,
-		nOccupied:                0,
-		nDeleted:                 0,
 	}
 
 	header := scFiles.createHeader()
@@ -140,9 +134,6 @@ func NewSCFilesFromExistingFiles(name string, hashAlgorithm hashfunc.HashAlgorit
 	scFiles.mapFileSize = header.FileSize
 	scFiles.hashAlgorithm = hashAlgorithm
 	scFiles.internalAlgorithm = internalAlg
-	scFiles.nEmpty = header.NumberOfEmptyRecords
-	scFiles.nOccupied = header.NumberOfOccupiedRecords
-	scFiles.nDeleted = header.NumberOfDeletedRecords
 
 	return
 }
@@ -155,11 +146,6 @@ func (S *SCFiles) CloseFiles() {
 	}
 
 	if S.mapFile != nil {
-		header := S.createHeader()
-		err := storage.SetHeader(S.mapFile, header)
-		if err == nil {
-			_ = storage.SetFileCloseDate(S.mapFile, false)
-		}
 		_ = S.mapFile.Sync()
 		_ = S.mapFile.Close()
 	}
@@ -305,18 +291,14 @@ func (S *SCFiles) Set(record model.Record) (err error) {
 	// empty (never used) then we now that we can set the record and avoid searching in overflow file.
 	// If we have a deleted record then save that for potential later use, but we have to search in overflow file as well.
 	var hasDeleted bool
-	var fromState uint8
 	var deletedRecord, ovflRecord model.Record
 	if (bucket.Record.State == model.RecordOccupied && utils.IsEqual(record.Key, bucket.Record.Key)) || bucket.Record.State == model.RecordEmpty {
-		fromState = bucket.Record.State
 		bucket.Record.State = model.RecordOccupied
 		bucket.Record.Key = record.Key
 		bucket.Record.Value = record.Value
 		err = S.setBucketRecord(bucket.Record)
 		if err != nil {
 			err = fmt.Errorf("error while updating or adding record to bucket or overflow: %s", err)
-		} else {
-			S.updateUtilizationInfo(fromState, bucket.Record.State)
 		}
 		return
 	} else if bucket.Record.State == model.RecordDeleted {
@@ -350,7 +332,6 @@ func (S *SCFiles) Set(record model.Record) (err error) {
 	// Having come to this part we didn't find any matching record, so set our new record in an available (deleted) spot
 	// if such was found earlier.
 	if hasDeleted {
-		fromState = deletedRecord.State
 		deletedRecord.State = model.RecordOccupied
 		deletedRecord.Key = record.Key
 		deletedRecord.Value = record.Value
@@ -363,8 +344,6 @@ func (S *SCFiles) Set(record model.Record) (err error) {
 			err = S.setBucketRecord(deletedRecord)
 			if err != nil {
 				err = fmt.Errorf("error while updating or adding record to bucket or overflow: %s", err)
-			} else {
-				S.updateUtilizationInfo(fromState, deletedRecord.State)
 			}
 		}
 		return
@@ -403,7 +382,6 @@ func (S *SCFiles) Set(record model.Record) (err error) {
 // It returns:
 //   - err is a standard error, if something went wrong
 func (S *SCFiles) Delete(record model.Record) (err error) {
-	fromState := record.State
 	record.State = model.RecordDeleted
 	record.Key = make([]byte, S.keyLength)
 	record.Value = make([]byte, S.valueLength)
@@ -417,8 +395,6 @@ func (S *SCFiles) Delete(record model.Record) (err error) {
 		err = S.setBucketRecord(record)
 		if err != nil {
 			err = fmt.Errorf("error while updating record in bucket: %s", err)
-		} else {
-			S.updateUtilizationInfo(fromState, record.State)
 		}
 	}
 

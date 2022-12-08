@@ -35,24 +35,6 @@ func (S *SCFiles) openHashMapFile() (header storage.Header, err error) {
 			return
 		}
 
-		// Check if we need update header with hash map utilization info
-		if header.FileCloseDate == 0 {
-			header, err = storage.GetFileUtilization(S.mapFile, 0, header)
-			if err != nil {
-				_ = S.mapFile.Close()
-				S.mapFile = nil
-				return
-			}
-		} else {
-			err = storage.SetFileCloseDate(S.mapFile, true)
-			if err != nil {
-				_ = S.mapFile.Close()
-				S.mapFile = nil
-				err = fmt.Errorf("error when trying to write to hash map file")
-				return
-			}
-		}
-
 	} else {
 		err = fmt.Errorf("hash map file not found")
 		return
@@ -280,33 +262,7 @@ func (S *SCFiles) createHeader() (header storage.Header) {
 		MaxBucketNo:                  S.maxBucketNo,
 		FileSize:                     S.mapFileSize,
 		CollisionResolutionTechnique: int64(crt.SeparateChaining),
-		NumberOfEmptyRecords:         S.nEmpty,
-		NumberOfOccupiedRecords:      S.nOccupied,
-		NumberOfDeletedRecords:       S.nDeleted,
 	}
 
 	return
-}
-
-// updateUtilizationInfo - Updates information about current utilization
-func (S *SCFiles) updateUtilizationInfo(fromState, toState uint8) {
-	if fromState != toState {
-		switch fromState {
-		case model.RecordEmpty:
-			S.nEmpty--
-		case model.RecordOccupied:
-			S.nOccupied--
-		case model.RecordDeleted:
-			S.nDeleted--
-		}
-
-		switch toState {
-		case model.RecordEmpty:
-			S.nEmpty++
-		case model.RecordOccupied:
-			S.nOccupied++
-		case model.RecordDeleted:
-			S.nDeleted++
-		}
-	}
 }
